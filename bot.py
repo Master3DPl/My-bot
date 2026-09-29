@@ -108,11 +108,11 @@ TEXTS = {
         "access_denied": "⛔ У вас нет доступа к этому боту.",
         "bot_globally_disabled": "🛠 Бот временно отключен администратором и находится на техническом обслуживании.",
         "video_disabled_for_users": "⛔ Создание видео временно отключено администратором.",
-        "active": "🎬 Бот активен! Отправьте **минимум 3 фотографии**, чтобы бот собрал из них видео в формате 4:3 с фильтром.",
+        "active": "🎬 Бот активен! Отправьте **минимум 3 фотографии**, чтобы бот собрал из них видео в формате 4:3.",
         "photo_saved": "📥 Фото принято ({}/3). Отправьте еще, чтобы запустить создание видео.",
         "lang_select": "🌐 Выберите язык / Оберіть мову:",
         "lang_changed": "✅ Язык успешно изменен на русский!",
-        "rendering": "⚡ Накопилось 3 фото! Применяю фильтр, единый стиль и собираю видео...",
+        "rendering": "⚡ Накопилось 3 фото! Применяю единый стиль, фильтр и собираю видео...",
         "music_downloading": "🔍 Ищу и скачиваю трек для вас...",
         "music_error": "❌ Не удалось скачать трек, попробуйте еще раз."
     },
@@ -120,11 +120,11 @@ TEXTS = {
         "access_denied": "⛔ У вас немає доступу до цього бота.",
         "bot_globally_disabled": "🛠 Бот тимчасово вимкнений адміністратором на технічне обслуговування.",
         "video_disabled_for_users": "⛔ Створення відео тимчасово вимкнено адміністратором.",
-        "active": "🎬 Бот активний! Надішліть **мінімум 3 фотографії**, щоб бот зібрав із них відео у форматі 4:3 із фільтром.",
+        "active": "🎬 Бот активний! Надішліть **мінімум 3 фотографії**, щоб бот зібрав із них відео у форматі 4:3.",
         "photo_saved": "📥 Фото прийнято ({}/3). Надішліть ще, щоб запустити створення відео.",
         "lang_select": "🌐 Оберіть мову / Выберите язык:",
         "lang_changed": "✅ Мову успішно змінено на українську!",
-        "rendering": "⚡ Збралося 3 фото! Застосовую фільтр, єдиний стиль та збираю відео...",
+        "rendering": "⚡ Збралося 3 фото! Застосовую єдиний стиль, фільтр та збираю відео...",
         "music_downloading": "🔍 Шукаю та завантажую трек для вас...",
         "music_error": "❌ Не вдалося завантажити трек, спробуйте ще раз."
     }
@@ -186,6 +186,7 @@ def get_user_keyboard(lang, user_id=None):
     return kb
 
 def create_pure_text_image(text, output_path):
+    # Розмір підгодовано під формат 4:3 (960x720)
     img = Image.new('RGBA', (960, 720), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     
@@ -582,7 +583,7 @@ def handle_user_messages(message):
         bot.send_message(message.chat.id, TEXTS[lang]["lang_select"], reply_markup=markup)
         return
     elif text in ["🎬 Инструкция", "🎬 Інструкція"]:
-        instr = "Отправьте ровно 3 фотографии (или альбомом), и бот автоматически соберет из них видео в формате 4:3 с фильтром!" if lang == "ru" else "Надішліть рівно 3 фотографії (або альбомом), і бот автоматично збере з них відео у форматі 4:3 із фільтром!"
+        instr = "Отправьте ровно 3 фотографии (или альбомом), и бот автоматически соберет из них видео в формате 4:3!" if lang == "ru" else "Надішліть рівно 3 фотографії (або альбомом), і бот автоматично збере з них відео у форматі 4:3!"
         bot.send_message(message.chat.id, instr, reply_markup=get_user_keyboard(lang, user_id))
         return
     elif text in ["🎵 Украинская музыка", "🎵 Українська музика"]:
@@ -692,14 +693,30 @@ def generate_video_from_photos(chat_id, photo_bytes_list, lang, video_index=1):
         for i in range(25):
             sequence_indices.append(i % len(photo_bytes_list))
 
+        # Выбираем ОДИН общий фильтр на все видео для этого пользователя
+        filter_types = ["noir", "contrast", "bright", "matte", "vintage"]
+        chosen_filter = random.choice(filter_types)
+
         for i, photo_idx in enumerate(sequence_indices):
             p_bytes = photo_bytes_list[photo_idx]
             
             img = Image.open(io.BytesIO(p_bytes)).convert("RGB")
             
-            # Фільтр увімкнено завжди для кожного кадру (стиль Noir / кінематографічний чорно-білий контраст)
-            img = ImageOps.grayscale(img)
-            img = ImageEnhance.Contrast(img).enhance(1.5)
+            # Применяем выбранный фильтр ко всем кадрам одинаково
+            if chosen_filter == "noir":
+                img = ImageOps.grayscale(img)
+                img = ImageEnhance.Contrast(img).enhance(1.5)
+            elif chosen_filter == "matte":
+                img = ImageOps.grayscale(img)
+                img = ImageEnhance.Brightness(img).enhance(0.85)
+                img = ImageEnhance.Contrast(img).enhance(1.1)
+            elif chosen_filter == "bright":
+                img = ImageEnhance.Brightness(img).enhance(1.25)
+            elif chosen_filter == "vintage":
+                img = ImageEnhance.Color(img).enhance(0.4)
+                img = ImageEnhance.Contrast(img).enhance(1.2)
+            else:
+                img = ImageEnhance.Color(img).enhance(0.7)
 
             # Строгая обрезка под формат 4:3
             img_w, img_h = img.size
@@ -742,7 +759,7 @@ def generate_video_from_photos(chat_id, photo_bytes_list, lang, video_index=1):
         )
 
         with open(output_path, 'rb') as vid:
-            bot.send_video(chat_id, vid, caption=f"✅ Готово (формат 4:3 з фільтром)!", reply_markup=get_user_keyboard(lang, chat_id))
+            bot.send_video(chat_id, vid, caption=f"✅ Готово (формат 4:3)!", reply_markup=get_user_keyboard(lang, chat_id))
 
     except Exception as e:
         bot.send_message(chat_id, f"❌ Render error: {e}", reply_markup=get_user_keyboard(lang, chat_id))

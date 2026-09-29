@@ -33,9 +33,6 @@ CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 SUPER_ADMIN = "drborys".lower()
 SUPER_ADMIN_ID = 000000000  # Зміни на свій реальний Telegram ID, якщо потрібно
 
-# Текст вотермарки для трафіку (зміни на свій юзернейм або назву каналу)
-TRAFFIC_WATERMARK = "@t.me/your_channel"
-
 UKR_TRACKS = [
     "KOLA — Біля серця",
     "Артем Пивоваров — Маніфест",
@@ -111,11 +108,11 @@ TEXTS = {
         "access_denied": "⛔ У вас нет доступа к этому боту.",
         "bot_globally_disabled": "🛠 Бот временно отключен администратором и находится на техническом обслуживании.",
         "video_disabled_for_users": "⛔ Создание видео временно отключено администратором.",
-        "active": "🎬 Бот активен! Отправьте **минимум 3 фотографии**, чтобы бот собрал из них вертикальное видео (9:16) для трафика.",
+        "active": "🎬 Бот активен! Отправьте **минимум 3 фотографии**, чтобы бот собрал из них видео в формате 4:3 с фильтром.",
         "photo_saved": "📥 Фото принято ({}/3). Отправьте еще, чтобы запустить создание видео.",
         "lang_select": "🌐 Выберите язык / Оберіть мову:",
         "lang_changed": "✅ Язык успешно изменен на русский!",
-        "rendering": "⚡ Накопилось 3 фото! Применяю фильтр, упаковываю под формат 9:16 и собираю видео...",
+        "rendering": "⚡ Накопилось 3 фото! Применяю фильтр, единый стиль и собираю видео...",
         "music_downloading": "🔍 Ищу и скачиваю трек для вас...",
         "music_error": "❌ Не удалось скачать трек, попробуйте еще раз."
     },
@@ -123,11 +120,11 @@ TEXTS = {
         "access_denied": "⛔ У вас немає доступу до цього бота.",
         "bot_globally_disabled": "🛠 Бот тимчасово вимкнений адміністратором на технічне обслуговування.",
         "video_disabled_for_users": "⛔ Створення відео тимчасово вимкнено адміністратором.",
-        "active": "🎬 Бот активний! Надішліть **мінімум 3 фотографії**, щоб бот зібрав із них вертикальне відео (9:16) для трафіку.",
+        "active": "🎬 Бот активний! Надішліть **мінімум 3 фотографії**, щоб бот зібрав із них відео у форматі 4:3 із фільтром.",
         "photo_saved": "📥 Фото прийнято ({}/3). Надішліть ще, щоб запустити створення відео.",
         "lang_select": "🌐 Оберіть мову / Выберите язык:",
         "lang_changed": "✅ Мову успішно змінено на українську!",
-        "rendering": "⚡ Збралося 3 фото! Застосовую фільтр, упаковую під формат 9:16 та збираю відео...",
+        "rendering": "⚡ Збралося 3 фото! Застосовую фільтр, єдиний стиль та збираю відео...",
         "music_downloading": "🔍 Шукаю та завантажую трек для вас...",
         "music_error": "❌ Не вдалося завантажити трек, спробуйте ще раз."
     }
@@ -189,8 +186,7 @@ def get_user_keyboard(lang, user_id=None):
     return kb
 
 def create_pure_text_image(text, output_path):
-    # Создаем вертикальное изображение 720x1280 (формат 9:16) с прозрачным фоном
-    img = Image.new('RGBA', (720, 1280), (0, 0, 0, 0))
+    img = Image.new('RGBA', (960, 720), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     
     font_path = os.path.join(BASE_DIR, "font.ttf")
@@ -198,11 +194,9 @@ def create_pure_text_image(text, output_path):
         font_path = "C:/Windows/Fonts/impact.ttf"
 
     try:
-        font = ImageFont.truetype(font_path, 48)  # Увеличенный размер для читаемости
-        watermark_font = ImageFont.truetype(font_path, 28)
+        font = ImageFont.truetype(font_path, 34)
     except:
         font = ImageFont.load_default()
-        watermark_font = ImageFont.load_default()
 
     text_color = (255, 255, 255, 255)
     shadow_color = (0, 0, 0, 255)
@@ -220,9 +214,9 @@ def create_pure_text_image(text, output_path):
             try:
                 w_test = font.getlength(test_line)
             except:
-                w_test = len(test_line) * 20
+                w_test = len(test_line) * 16
                 
-            if w_test <= 600:
+            if w_test <= 820:
                 current_line = test_line
             else:
                 all_lines.append(current_line)
@@ -230,9 +224,9 @@ def create_pure_text_image(text, output_path):
         if current_line:
             all_lines.append(current_line)
 
-    line_height = 64  # Увеличенный интервал между строками
+    line_height = 42
     total_text_height = len(all_lines) * line_height
-    start_y = (1280 - total_text_height) / 2
+    start_y = (720 - total_text_height) / 2
 
     y = start_y
     for line in all_lines:
@@ -243,9 +237,9 @@ def create_pure_text_image(text, output_path):
         try:
             w = font.getlength(line)
         except:
-            w = len(line) * 20
+            w = len(line) * 16
             
-        x = (720 - w) / 2
+        x = (960 - w) / 2
         
         shadow_offset = 3
         for dx, dy in [(-shadow_offset, -shadow_offset), (shadow_offset, -shadow_offset), 
@@ -255,19 +249,6 @@ def create_pure_text_image(text, output_path):
             
         draw.text((x, y), line, font=font, fill=text_color)
         y += line_height
-
-    # Вотермарка (ссылка для трафика)
-    wm_text = TRAFFIC_WATERMARK
-    try:
-        wm_w = watermark_font.getlength(wm_text)
-    except:
-        wm_w = len(wm_text) * 14
-    wm_x = (720 - wm_w) / 2
-    wm_y = 1180  
-
-    for dx, dy in [(-2, -2), (2, -2), (-2, 2), (2, 2), (-2, 0), (2, 0), (0, -2), (0, 2)]:
-        draw.text((wm_x + dx, wm_y + dy), wm_text, font=watermark_font, fill=(0, 0, 0, 220))
-    draw.text((wm_x, wm_y), wm_text, font=watermark_font, fill=(255, 255, 255, 240))
 
     img.save(output_path)
 
@@ -469,10 +450,6 @@ def handle_admin_messages(message):
     user_id = message.from_user.id
     text = message.text
 
-    if text in ["⚠️ Пожаловаться / Написать админу", "⚠ Пожаловаться / Написать админу", "❌ Завершить диалог", "❌ Завершити діалог"]:
-        handle_user_messages(message)
-        return
-
     if text and ("Бот ВКЛЮЧЕН" in text or "Бот ВЫКЛЮЧЕН" in text):
         current_status = config.get("bot_enabled", True)
         config["bot_enabled"] = not current_status
@@ -565,7 +542,7 @@ def handle_user_messages(message):
         "❌ Завершить диалог", "❌ Завершити діалог"
     ]
 
-    if text in ["⚠️ Пожаловаться / Написать админу", "⚠ Пожаловаться / Написать админу"]:
+    if text in ["⚠️ Пожаловаться / Написать админу", "⚠ Поскаржитися / Написати адміну"]:
         user_support_mode.add(user_id)
         
         kb = ReplyKeyboardMarkup(resize_keyboard=True)
@@ -605,7 +582,7 @@ def handle_user_messages(message):
         bot.send_message(message.chat.id, TEXTS[lang]["lang_select"], reply_markup=markup)
         return
     elif text in ["🎬 Инструкция", "🎬 Інструкція"]:
-        instr = "Отправьте ровно 3 фотографии (или альбомом), и бот автоматически соберет из них вертикальное видео (9:16) с фильтром и вашей ссылкой!" if lang == "ru" else "Надішліть рівно 3 фотографії (або альбомом), і бот автоматично збере з них вертикальне відео (9:16) із фільтром та вашим посиланням!"
+        instr = "Отправьте ровно 3 фотографии (или альбомом), и бот автоматически соберет из них видео в формате 4:3 с фильтром!" if lang == "ru" else "Надішліть рівно 3 фотографії (або альбомом), і бот автоматично збере з них відео у форматі 4:3 із фільтром!"
         bot.send_message(message.chat.id, instr, reply_markup=get_user_keyboard(lang, user_id))
         return
     elif text in ["🎵 Украинская музыка", "🎵 Українська музика"]:
@@ -720,13 +697,13 @@ def generate_video_from_photos(chat_id, photo_bytes_list, lang, video_index=1):
             
             img = Image.open(io.BytesIO(p_bytes)).convert("RGB")
             
-            # Фильтр Noir применяется всегда для каждого кадра
+            # Фільтр увімкнено завжди для кожного кадру (стиль Noir / кінематографічний чорно-білий контраст)
             img = ImageOps.grayscale(img)
             img = ImageEnhance.Contrast(img).enhance(1.5)
 
-            # Строгая обрезка под вертикальный формат 9:16
+            # Строгая обрезка под формат 4:3
             img_w, img_h = img.size
-            target_aspect = 9 / 16  
+            target_aspect = 4 / 3  
             current_aspect = img_w / img_h
             if current_aspect > target_aspect:
                 new_w = int(img_h * target_aspect)
@@ -737,8 +714,8 @@ def generate_video_from_photos(chat_id, photo_bytes_list, lang, video_index=1):
                 offset = (img_h - new_h) // 2
                 img = img.crop((0, offset, img_w, offset + new_h))
 
-            # Разрешение 720x1280 (вертикальный стандарт 9:16 для TikTok, Reels, Shorts)
-            img = img.resize((720, 1280), Image.Resampling.LANCZOS)
+            # Разрешение 960x720 (соотношение 4:3)
+            img = img.resize((960, 720), Image.Resampling.LANCZOS)
 
             temp_p = os.path.join(BASE_DIR, f"temp_{chat_id}_{video_index}_{i}.jpg")
             img.save(temp_p, "JPEG", quality=95)
@@ -765,7 +742,7 @@ def generate_video_from_photos(chat_id, photo_bytes_list, lang, video_index=1):
         )
 
         with open(output_path, 'rb') as vid:
-            bot.send_video(chat_id, vid, caption=f"✅ Готово (формат 9:16 для трафіку)!", reply_markup=get_user_keyboard(lang, chat_id))
+            bot.send_video(chat_id, vid, caption=f"✅ Готово (формат 4:3 з фільтром)!", reply_markup=get_user_keyboard(lang, chat_id))
 
     except Exception as e:
         bot.send_message(chat_id, f"❌ Render error: {e}", reply_markup=get_user_keyboard(lang, chat_id))

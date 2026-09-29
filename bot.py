@@ -244,7 +244,7 @@ TEXTS = {
         "photo_saved": "📥 Фото прийнято ({}/3). Надішліть ще, щоб запустити створення відео.",
         "lang_select": "🌐 Оберіть мову / Выберите язык:",
         "lang_changed": "✅ Мову успішно змінено на українську!",
-        "rendering": "⚡ Збралося 3 фото! Застосовую квадратний формат, цитату та затемнення...",
+        "rendering": "⚡ Зібралося 3 фото! Застосовую квадратний формат, цитату та затемнення...",
         "music_downloading": "🔍 Шукаю та завантажую трек для вас...",
         "music_error": "❌ Не вдалося завантажити трек, спробуйте ще раз."
     }
@@ -745,6 +745,80 @@ def handle_user_messages(message):
                 sub_photos = user_photos_buffer[chat_id][:3]
                 user_photos_buffer[chat_id] = []
                 bot.reply_to(message, TEXTS[lang]["rendering"], reply_markup=get_user_keyboard(lang, user_id))
+                
+                try:
+                    # 1. Создаем картинки с цитатами
+                    quote_text = get_unique_quote(user_id, lang)
+                    img_paths = []
+                    for idx, p_data in enumerate(sub_photos):
+                        p_path = os.path.join(BASE_DIR, f"temp_{user_id}_{idx}.png")
+                        base_img = Image.open(io.BytesIO(p_data)).convert("RGBA")
+                        base_img = ImageOps.fit(base_img, (1080, 1920), Image.Resampling.LANCZOS)
+                        
+                        # Затемнение
+                        dark = Image.new('RGBA', (1080, 1920), (0, 0, 0, 120))
+                        base_img = Image.alpha_composite(base_img, dark)
+                        base_img.save(p_path)
+                        
+                        # Текст поверх
+                        if idx == 0:
+                            create_pure_text_image(quote_text, p_path)
+                        img_paths.append(p_path)
+
+                    # 2. Выбираем украинский трек и ищем через yt-dlp
+                    bot.send_message(chat_id, TEXTS[lang]["music_downloading"])
+                    track_name = get_unique_ukr_track(user_id)
+                    
+                    audio_path = os.path.join(BASE_DIR, f"audio_{user_id}.mp3")
+                    ydl_opts = {
+                        'format': 'bestaudio/best',
+                        'outtmpl': audio_path.replace('.mp3', ''),
+                        'postprocessors': [{
+                            'key': 'FFmpegExtractAudio',
+                            'preferredcodec': 'mp3',
+                            'preferredquality': '192',
+                        }],
+                        'quiet': True,
+                        'noplaylist': True
+                    }
+                    
+                    try:
+                        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                            ydl.extract_info(f"ytsearch1:{track_name} audio", download=True)
+                        if not os.path.exists(audio_path):
+                            for f_name in os.listdir(BASE_DIR):
+                                if f_name.startswith(f"audio_{user_id}") and f_name.endswith('.mp3'):
+                                    audio_path = os.path.join(BASE_DIR, f_name)
+                                    break
+                    except Exception as ex:
+                        print(f"Music download error: {ex}")
+
+                    # 3. Собираем видео через MoviePy
+                    clips = [ImageClip(p).set_duration(3.5) for p in img_paths]
+                    video = concatenate_videoclips(clips, method="compose")
+                    
+                    if os.path.exists(audio_path):
+                        from moviepy.audio.io.AudioFileClip import AudioFileClip
+                        audio = AudioFileClip(audio_path).set_duration(video.duration)
+                        video = video.set_audio(audio)
+
+                    output_video_path = os.path.join(BASE_DIR, f"result_{user_id}.mp4")
+                    video.write_videofile(output_video_path, fps=24, codec='libx264', audio_codec='aac', logger=None)
+
+                    # 4. Отправляем готовое видео пользователю
+                    with open(output_video_path, 'rb') as vid_file:
+                        bot.send_video(chat_id, vid_file, caption=f"🎵 {track_name}", reply_markup=get_user_keyboard(lang, user_id))
+
+                    # 5. Очистка временных файлов
+                    for p in img_paths:
+                        if os.path.exists(p): os.remove(p)
+                    if os.path.exists(output_video_path): os.remove(output_video_path)
+                    if os.path.exists(audio_path): os.remove(audio_path)
+                    gc.collect()
+
+                except Exception as render_err:
+                    print(f"Rendering error: {render_err}")
+                    bot.send_message(chat_id, TEXTS[lang]["music_error"], reply_markup=get_user_keyboard(lang, user_id))
         except Exception as e:
             print(f"Error handling photo: {e}")
 

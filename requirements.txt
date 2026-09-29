@@ -1,0 +1,4 @@
+pyTelegramBotAPI
+Pillow
+moviepy
+yt-dlp

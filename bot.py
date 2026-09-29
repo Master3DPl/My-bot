@@ -1,96 +1,174 @@
 import os
+import random
 import io
 import gc
 import json
-import random
 import threading
 from flask import Flask
 import telebot
-from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
-from PIL import Image, ImageDraw, ImageFont, ImageEnhance, ImageOps
-from moviepy.editor import ImageClip, concatenate_videoclips, CompositeVideoClip
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+from PIL import Image, ImageOps, ImageEnhance, ImageDraw, ImageFont
+from moviepy import ImageClip, concatenate_videoclips, CompositeVideoClip, vfx
 import yt_dlp
 
-# --- НАЛАШТУВАННЯ ТА ІНІЦІАЛІЗАЦІЯ ---
-TOKEN = "ТУТ_ВСТАВТЕ_ВАШ_ТОКЕН_БОТА"  # <--- Замініть на токен вашого бота
-ADMIN_ID = 123456789                  # <--- Замініть на ваш Telegram ID (суперадмін)
-
-bot = telebot.TeleBot(TOKEN)
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# Файли для збереження даних
-USERS_FILE = os.path.join(BASE_DIR, "allowed_users.json")
-CONFIG_FILE = os.path.join(BASE_DIR, "bot_config.json")
-
-# Стани
-user_photos_buffer = {}  # chat_id -> [list of photo bytes]
-admin_as_user_mode = set() # адміністратори, які увійшли в режим звичайного юзера
-admin_broadcast_mode = set() # адміністратори, які вводять текст для розсилки
-admin_chatting_with = {} # admin_id -> target_user_id (режим діалогу з юзером)
-
-# Цитати для відео
-QUOTES = {
-    "ru": [
-        "Время не ждет, оно лишь меняет нас.",
-        "Каждый шаг — это новая история.",
-        "Иногда молчание говорит громче слов.",
-        "Создавай свою реальность каждый день.",
-        "Сила внутри, а не снаружи."
-    ],
-    "uk": [
-        "Час не чекає, він лише змінює нас.",
-        "Кожен крок — це нова історія.",
-        "Іноді мовчання говорить голосніше за слова.",
-        "Створюй свою реальність щодня.",
-        "Сила всередині, а не ззовні."
-    ]
-}
-
-# --- РОБОТА З ФАЙЛАМИ ДАНИХ ---
-def load_json(file_path, default_val):
-    if os.path.exists(file_path):
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except:
-            pass
-    return default_val
-
-def save_json(file_path, data):
-    try:
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
-    except Exception as e:
-        print(f"Error saving {file_path}: {e}")
-
-allowed_users = load_json(USERS_FILE, []) # Список дозволених користувачів
-bot_config = load_json(CONFIG_FILE, {"bot_active": True, "video_enabled": True, "user_languages": {}})
-
-# --- FLASK СЕРВЕР ДЛЯ ХОСТИНГУ (Render тощо) ---
-app = Flask('')
+# --- Міні-вебсервер Flask для обходу обмежень безкоштовного Web Service на Render ---
+app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot is running!"
+    return "Bot is alive and running!"
 
-def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
+def run_web():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+# -----------------------------------------------------------------------------------
 
-def keep_alive():
-    t = threading.Thread(target=run_flask)
-    t.daemon = True
-    t.start()
+TOKEN = "8658313360:AAGe5E7-ogE6nMqN8I3OlKuAZBqrthhckHg"
+bot = telebot.TeleBot(TOKEN)
 
-# --- ДОПОМІЖНІ ФУНКЦІЇ ---
-def get_user_lang(chat_id):
-    str_id = str(chat_id)
-    return bot_config["user_languages"].get(str_id, "uk")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+USERS_FILE = os.path.join(BASE_DIR, "allowed_users.json")
+CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 
-def set_user_lang(chat_id, lang):
-    str_id = str(chat_id)
-    bot_config["user_languages"][str_id] = lang
-    save_json(CONFIG_FILE, bot_config)
+SUPER_ADMIN = "drborys".lower()
+SUPER_ADMIN_ID = 000000000  # Зміни на свій реальний Telegram ID, якщо потрібно
+
+UKR_TRACKS = [
+    "KOLA — Біля серця",
+    "Артем Пивоваров — Маніфест",
+    "YAKTAK — Погляд",
+    "SKOFKA — Чути гімн",
+    "Океан Ельзи — Обійми",
+    "SadSvit — Касета",
+    "KAZKA — Плакала",
+    "Павло Зібров — Хрещатик"
+]
+
+def load_allowed_users():
+    if os.path.exists(USERS_FILE):
+        try:
+            with open(USERS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return {u.lower(): 0 for u in data}
+                elif isinstance(data, dict):
+                    return {str(k).lower(): v for k, v in data.items()}
+        except:
+            pass
+    return {SUPER_ADMIN: 0}
+
+def save_allowed_users(users_dict):
+    with open(USERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(users_dict, f, ensure_ascii=False, indent=4)
+
+def load_config():
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            pass
+    return {"bot_enabled": True, "video_creation_enabled": True}
+
+def save_config(config_dict):
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(config_dict, f, ensure_ascii=False, indent=4)
+
+allowed_users = load_allowed_users()
+config = load_config()
+
+if "bot_enabled" not in config:
+    config["bot_enabled"] = True
+if "video_creation_enabled" not in config:
+    config["video_creation_enabled"] = True
+save_config(config)
+
+admin_chat_states = {}
+admin_as_user_mode = set()
+user_photos_buffer = {}
+user_support_mode = set()
+
+QUOTES = {
+    "ru": [
+        "ты годами собираешь чужие инструкции и\nсохраняешь полезные гайды, но так и не\nделаешь первый шаг..\n\nначнешь применять знания на практике или\nснова пролистаешь..",
+        "ты выбираешь сидеть в тепле и комфорте,\nподсознательно хороня любые свои амбиции и цели..\n\nвыйдешь из зоны комфорта или снова пролистаешь..",
+        "время идет, а ты продолжаешь ждать идеального момента..\n\nа он никогда не наступит, пока ты не начнешь.",
+        "дорога не прощает ошибок, она учит\nдержать удар и идти до конца..\n\nтвоя цель стоит того, чтобы рискнуть?"
+    ],
+    "ua": [
+        "ти роками збираєш чужі інструкції та\nзберігаєш корисні гайди, але так і не\nробиш перший крок..\n\nпочнешь застосовувати знання на практиці чи\nзнову прогорнеш..",
+        "ти обираєш сидіти в теплі і комфорті,\nпідсвідомо ховаючи будь-які свої амбиції та цілі..\n\nвийдеш із зони комфорту чи знову прогорнеш..",
+        "час іде, а ты продовжуєш чекати на ідеальний момент..\n\nа він ніколи не настане, поки ты не почнеш.",
+        "дорога не прощає помилок, вона вчить\nтримати удар і йти до кінця..\n\nтвоя мета варта того, щоб ризикнути?"
+    ]
+}
+
+TEXTS = {
+    "ru": {
+        "access_denied": "⛔ У вас нет доступа к этому боту.",
+        "bot_globally_disabled": "🛠 Бот временно отключен администратором и находится на техническом обслуживании.",
+        "video_disabled_for_users": "⛔ Создание видео временно отключено администратором.",
+        "active": "🎬 Бот активен! Отправьте **минимум 3 фотографии**, чтобы бот собрал из них видео в формате 4:3 с фильтром.",
+        "photo_saved": "📥 Фото принято ({}/3). Отправьте еще, чтобы запустить создание видео.",
+        "lang_select": "🌐 Выберите язык / Оберіть мову:",
+        "lang_changed": "✅ Язык успешно изменен на русский!",
+        "rendering": "⚡ Накопилось 3 фото! Применяю фильтр, единый стиль и собираю видео...",
+        "music_downloading": "🔍 Ищу и скачиваю трек для вас...",
+        "music_error": "❌ Не удалось скачать трек, попробуйте еще раз."
+    },
+    "ua": {
+        "access_denied": "⛔ У вас немає доступу до цього бота.",
+        "bot_globally_disabled": "🛠 Бот тимчасово вимкнений адміністратором на технічне обслуговування.",
+        "video_disabled_for_users": "⛔ Створення відео тимчасово вимкнено адміністратором.",
+        "active": "🎬 Бот активний! Надішліть **мінімум 3 фотографії**, щоб бот зібрав із них відео у форматі 4:3 із фільтром.",
+        "photo_saved": "📥 Фото прийнято ({}/3). Надішліть ще, щоб запустити створення відео.",
+        "lang_select": "🌐 Оберіть мову / Выберите язык:",
+        "lang_changed": "✅ Мову успішно змінено на українську!",
+        "rendering": "⚡ Збралося 3 фото! Застосовую фільтр, єдиний стиль та збираю відео...",
+        "music_downloading": "🔍 Шукаю та завантажую трек для вас...",
+        "music_error": "❌ Не вдалося завантажити трек, спробуйте ще раз."
+    }
+}
+
+def get_user_lang(user_id):
+    users_lang = config.get("users_lang", {})
+    return users_lang.get(str(user_id), "ru")
+
+def set_user_lang(user_id, lang):
+    if "users_lang" not in config:
+        config["users_lang"] = {}
+    config["users_lang"][str(user_id)] = lang
+    save_config(config)
+
+def is_super_admin(message_or_callback):
+    user_id = message_or_callback.from_user.id
+    username = message_or_callback.from_user.username
+    return user_id == SUPER_ADMIN_ID or (username and username.lower() == SUPER_ADMIN)
+
+def is_allowed(message):
+    if is_super_admin(message):
+        return True
+    username = message.from_user.username
+    if not username:
+        return str(message.from_user.id) in allowed_users.values()
+    return username.lower() in allowed_users
+
+def get_admin_keyboard():
+    kb = ReplyKeyboardMarkup(resize_keyboard=True)
+    is_on = config.get("bot_enabled", True)
+    status_btn_text = "🟢 Бот ВКЛЮЧЕН (Нажмите для откл)" if is_on else "🔴 Бот ВЫКЛЮЧЕН (Нажмите для вкл)"
+    kb.row(KeyboardButton(status_btn_text))
+    kb.row(KeyboardButton("💬 Написать пользователю"), KeyboardButton("📋 Список пользователей"))
+    kb.row(KeyboardButton("👤 Вийти в режим юзера (Тест)"))
+    kb.row(KeyboardButton("❌ Выйти из режима ответа"))
+    return kb
+
+def get_admin_panel_inline():
+    kb = InlineKeyboardMarkup(row_width=1)
+    is_video_on = config.get("video_creation_enabled", True)
+    status_text = "🟢 Генерація відео: УВІМКНЕНА" if is_video_on else "🔴 Генерація відео: ВИМКНЕНА"
+    kb.add(InlineKeyboardButton(status_text, callback_data="toggle_video_generation"))
+    return kb
 
 def get_user_keyboard(lang, user_id=None):
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
@@ -100,27 +178,18 @@ def get_user_keyboard(lang, user_id=None):
     if lang == "ru":
         kb.row(KeyboardButton("🌐 Сменить язык"), KeyboardButton("🎬 Инструкция"))
         kb.row(KeyboardButton("🎵 Украинская музыка"))
+        kb.row(KeyboardButton("⚠ Пожаловаться / Написать админу"))
     else:
         kb.row(KeyboardButton("🌐 Змінити мову"), KeyboardButton("🎬 Інструкція"))
         kb.row(KeyboardButton("🎵 Українська музика"))
+        kb.row(KeyboardButton("⚠️ Поскаржитися / Написати адміну"))
     return kb
 
-def get_admin_keyboard():
-    kb = ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.row(KeyboardButton("👥 Список користувачів"), KeyboardButton("📢 Розсилка"))
-    kb.row(KeyboardButton("⚙️ Увімк./Вимк. бота"), KeyboardButton("🎬 Увімк./Вимк. генерацію відео"))
-    kb.row(KeyboardButton("👤 Вийти в режим юзера"))
-    return kb
-
-# --- ГЕНЕРАЦІЯ ТЕКСТУ ТА ВІДЕО ---
 def create_pure_text_image(text, output_path):
     img = Image.new('RGBA', (960, 720), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     
-    # Вибираємо випадковий шрифт з наявних (font1.ttf, font2.ttf тощо) або стандартний
-    available_fonts = [f for f in os.listdir(BASE_DIR) if f.startswith("font") and f.endswith(".ttf")]
-    font_path = os.path.join(BASE_DIR, random.choice(available_fonts)) if available_fonts else os.path.join(BASE_DIR, "font.ttf")
-    
+    font_path = os.path.join(BASE_DIR, "font.ttf")
     if not os.path.exists(font_path):
         font_path = "C:/Windows/Fonts/impact.ttf"
 
@@ -183,10 +252,436 @@ def create_pure_text_image(text, output_path):
 
     img.save(output_path)
 
+@bot.message_handler(commands=['start'])
+def start(message):
+    user = message.from_user
+    user_id = user.id
+    lang = get_user_lang(user_id)
+
+    if user.username:
+        uname = user.username.lower()
+        if uname in allowed_users:
+            allowed_users[uname] = user_id
+            save_allowed_users(allowed_users)
+
+    if is_super_admin(message) and user_id not in admin_as_user_mode:
+        config["admin_chat_id"] = message.chat.id
+        save_config(config)
+        
+        admin_panel_text = "👑 **Панель администратора:**\n\nИспользуйте кнопки меню внизу и настройки ниже:"
+        bot.send_message(message.chat.id, admin_panel_text, parse_mode="Markdown", reply_markup=get_admin_keyboard())
+        bot.send_message(message.chat.id, "⚙ **Керування генерацією відео:**", parse_mode="Markdown", reply_markup=get_admin_panel_inline())
+        return
+
+    if not config.get("bot_enabled", True) and not is_super_admin(message):
+        bot.send_message(message.chat.id, TEXTS[lang]["bot_globally_disabled"])
+        return
+
+    if not is_allowed(message):
+        username_str = f"@{user.username}" if user.username else f"ID {user.id}"
+        bot.send_message(message.chat.id, TEXTS[lang]["access_denied"])
+        
+        admin_chat = config.get("admin_chat_id")
+        if admin_chat:
+            markup = InlineKeyboardMarkup()
+            markup.row(
+                InlineKeyboardButton("💬 Написать", callback_data=f"chat_with_{user.id}"),
+                InlineKeyboardButton("❌ Запретить", callback_data=f"deny_{user.id}_{user.username or 'noupname'}")
+            )
+            try:
+                bot.send_message(admin_chat, f"🔔 Запрос доступа от {username_str}\nID: `{user.id}`", parse_mode="Markdown", reply_markup=markup)
+            except:
+                pass
+        return
+
+    if user_id in user_support_mode:
+        user_support_mode.remove(user_id)
+        
+    bot.send_message(user_id, TEXTS[lang]["active"], reply_markup=get_user_keyboard(lang, user_id))
+
+@bot.callback_query_handler(func=lambda call: True)
+def callback_handler(call):
+    user_id = call.from_user.id
+    lang = get_user_lang(user_id)
+    is_admin = is_super_admin(call) and user_id not in admin_as_user_mode
+
+    if call.data == "toggle_video_generation":
+        if not is_super_admin(call):
+            bot.answer_callback_query(call.id, "⛔ У вас нет прав!", show_alert=True)
+            return
+        
+        current_status = config.get("video_creation_enabled", True)
+        config["video_creation_enabled"] = not current_status
+        save_config(config)
+        
+        new_status_text = "🟢 Генерація відео: УВІМКНЕНА" if config["video_creation_enabled"] else "🔴 Генерація відео: ВИМКНЕНА"
+        alert_text = "✅ Генерація відео ввімкнена для користувачів!" if config["video_creation_enabled"] else "❌ Генерація відео вимкнена для користувачів!"
+        
+        try:
+            bot.answer_callback_query(call.id, alert_text)
+            updated_kb = InlineKeyboardMarkup(row_width=1)
+            updated_kb.add(InlineKeyboardButton(new_status_text, callback_data="toggle_video_generation"))
+            bot.edit_message_reply_markup(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                reply_markup=updated_kb
+            )
+        except Exception as e:
+            print(f"Error toggling video generation: {e}")
+        return
+
+    if call.data.startswith("setlang_"):
+        new_lang = call.data.split("_")[1]
+        set_user_lang(user_id, new_lang)
+        bot.answer_callback_query(call.id, "OK")
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=TEXTS[new_lang]["lang_changed"]
+        )
+        bot.send_message(call.message.chat.id, "Главное меню:", reply_markup=get_admin_keyboard() if (is_super_admin(call) and user_id not in admin_as_user_mode) else get_user_keyboard(new_lang, user_id))
+        return
+
+    if call.data.startswith("select_user_id_") or call.data.startswith("chat_with_"):
+        if not is_super_admin(call):
+            bot.answer_callback_query(call.id, "⛔ У вас нет прав!", show_alert=True)
+            return
+        
+        parts = call.data.split("_")
+        target_chat_id = int(parts[-1])
+        admin_chat_states[user_id] = target_chat_id
+        
+        bot.answer_callback_query(call.id, "Режим диалога активирован")
+        
+        markup = InlineKeyboardMarkup()
+        markup.row(InlineKeyboardButton("❌ Выход (отмена)", callback_data="exit_chat"))
+        
+        bot.send_message(
+            chat_id=call.message.chat.id,
+            text=f"✍ **Режим отправки сообщений активен для пользователя (ID: `{target_chat_id}`):**\n\nВсе ваши сообщения будут уходить ему.",
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        return
+
+    if call.data.startswith("no_id_"):
+        bot.answer_callback_query(call.id, "⚠ У этого пользователя еще нет ID. Попросите его нажать /start в боте!", show_alert=True)
+        return
+
+    if call.data == "exit_chat":
+        if user_id in admin_chat_states:
+            del admin_chat_states[user_id]
+        bot.answer_callback_query(call.id, "Выход выполнен")
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="❌ Режим диалога завершен."
+        )
+        return
+
+    if call.data.startswith('allow_') or call.data.startswith('deny_'):
+        if not is_super_admin(call):
+            bot.answer_callback_query(call.id, "⛔ У вас нет прав!", show_alert=True)
+            return
+
+        data_parts = call.data.split('_')
+        action = data_parts[0]
+        target_user_id = int(data_parts[1])
+        username = data_parts[2] if len(data_parts) > 2 else ""
+        if username == 'noupname':
+            username = ""
+        else:
+            username = username.lower()
+
+        target_lang = get_user_lang(target_user_id)
+        markup = InlineKeyboardMarkup()
+
+        if action == 'allow':
+            if username:
+                allowed_users[username] = target_user_id
+            else:
+                allowed_users[str(target_user_id)] = target_user_id
+            save_allowed_users(allowed_users)
+            
+            bot.answer_callback_query(call.id, "✅ Доступ разрешен!")
+            markup.row(
+                InlineKeyboardButton("💬 Написать", callback_data=f"chat_with_{target_user_id}"),
+                InlineKeyboardButton("❌ Запретить", callback_data=f"deny_{target_user_id}_{username or 'noupname'}")
+            )
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text=f"✅ Запрос от @{username if username else target_user_id} **ОДОБРЕН**.",
+                parse_mode="Markdown",
+                reply_markup=markup
+            )
+            try:
+                msg = "🎉 Администратор одобрил ваш доступ! Нажмите /start." if target_lang == "ru" else "🎉 Адміністратор схвалив ваш доступ! Натисніть /start."
+                bot.send_message(target_user_id, msg)
+            except:
+                pass
+
+        elif action == 'deny':
+            if username and username in allowed_users:
+                del allowed_users[username]
+            elif str(target_user_id) in allowed_users:
+                del allowed_users[str(target_user_id)]
+            save_allowed_users(allowed_users)
+
+            bot.answer_callback_query(call.id, "❌ Доступ отклонен.")
+            markup.row(
+                InlineKeyboardButton("✅ Разрешить", callback_data=f"allow_{target_user_id}_{username or 'noupname'}")
+            )
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text=f"❌ Запрос от @{username if username else target_user_id} **ОТКЛОНЕН**.",
+                parse_mode="Markdown",
+                reply_markup=markup
+            )
+            try:
+                msg = "⛔ В доступе отказано." if target_lang == "ru" else "⛔ У доступі відмовлено."
+                bot.send_message(target_user_id, msg)
+            except:
+                pass
+
+@bot.message_handler(func=lambda message: is_super_admin(message) and message.from_user.id not in admin_as_user_mode, content_types=['text', 'photo'])
+def handle_admin_messages(message):
+    user_id = message.from_user.id
+    text = message.text
+
+    if text and ("Бот ВКЛЮЧЕН" in text or "Бот ВЫКЛЮЧЕН" in text):
+        current_status = config.get("bot_enabled", True)
+        config["bot_enabled"] = not current_status
+        save_config(config)
+        
+        status_msg = "🟢 **Бот успешно ВКЛЮЧЕН!**" if config["bot_enabled"] else "🔴 **Бот ВЫКЛЮЧЕН!**"
+        bot.send_message(message.chat.id, status_msg, parse_mode="Markdown", reply_markup=get_admin_keyboard())
+        bot.send_message(message.chat.id, "⚙ **Керування генерацією відео:**", parse_mode="Markdown", reply_markup=get_admin_panel_inline())
+        return
+
+    elif text == "👤 Вийти в режим юзера (Тест)":
+        admin_as_user_mode.add(user_id)
+        lang = get_user_lang(user_id)
+        bot.send_message(
+            message.chat.id, 
+            "👤 Ви вийшли з адмін-панелі та перейшли в режим звичайного користувача.\n\nЩоб повернутися назад, натисніть кнопку нижче.", 
+            reply_markup=get_user_keyboard(lang, user_id)
+        )
+        return
+
+    elif text == "💬 Написать пользователю":
+        markup = InlineKeyboardMarkup()
+        for u, uid in allowed_users.items():
+            if u.lower() == SUPER_ADMIN:
+                continue
+            if uid and uid != 0:
+                markup.row(InlineKeyboardButton(f"@{u} (ID: {uid})", callback_data=f"select_user_id_{uid}"))
+            else:
+                markup.row(InlineKeyboardButton(f"@{u} (Нет ID)", callback_data=f"no_id_{u}"))
+        
+        if len(markup.keyboard) == 0:
+            bot.send_message(message.chat.id, "ℹ Список разрешенных пользователей пока пуст (кроме вас).", reply_markup=get_admin_keyboard())
+        else:
+            bot.send_message(message.chat.id, "👥 **Выберите пользователя:**", parse_mode="Markdown", reply_markup=markup)
+        return
+
+    elif text == "📋 Список пользователей":
+        users_list = "\n".join([f"• @{u} (ID: {uid if uid != 0 else 'не получен'})" for u, uid in allowed_users.items()])
+        bot.send_message(message.chat.id, f"📋 **Список пользователей с доступом:**\n\n{users_list}", parse_mode="Markdown", reply_markup=get_admin_keyboard())
+        return
+
+    elif text == "❌ Выйти из режима ответа":
+        if user_id in admin_chat_states:
+            del admin_chat_states[user_id]
+        bot.send_message(message.chat.id, "❌ Режим непрерывного диалога завершен.", reply_markup=get_admin_keyboard())
+        return
+
+    if user_id in admin_chat_states:
+        target_chat_id = admin_chat_states[user_id]
+        try:
+            bot.copy_message(chat_id=target_chat_id, from_chat_id=message.chat.id, message_id=message.message_id)
+            bot.send_message(message.chat.id, "✅ Отправлено пользователю", reply_markup=get_admin_keyboard())
+        except Exception as e:
+            bot.send_message(message.chat.id, f"❌ Ошибка отправки: {e}", reply_markup=get_admin_keyboard())
+    else:
+        bot.send_message(message.chat.id, "ℹ️ Вы не выбрали пользователя для диалога. Нажмите **💬 Написать пользователю**.", parse_mode="Markdown", reply_markup=get_admin_keyboard())
+
+@bot.message_handler(func=lambda message: not is_super_admin(message) or message.from_user.id in admin_as_user_mode, content_types=['text', 'photo'])
+def handle_user_messages(message):
+    user = message.from_user
+    user_id = user.id
+    lang = get_user_lang(user_id)
+    text = message.text
+    is_admin = is_super_admin(message)
+
+    if text == "👑 Повернутися в адмін-панель" and is_admin:
+        if user_id in admin_as_user_mode:
+            admin_as_user_mode.remove(user_id)
+        bot.send_message(
+            message.chat.id, 
+            "👑 Ви знову в адмін-панелі!", 
+            reply_markup=get_admin_keyboard()
+        )
+        bot.send_message(message.chat.id, "⚙ **Керування генерацією відео:**", parse_mode="Markdown", reply_markup=get_admin_panel_inline())
+        return
+
+    if not config.get("bot_enabled", True) and not is_admin:
+        bot.send_message(message.chat.id, TEXTS[lang]["bot_globally_disabled"])
+        return
+
+    if not is_allowed(message):
+        bot.send_message(message.chat.id, TEXTS[lang]["access_denied"])
+        return
+
+    ignored_texts = [
+        "🎵 Украинская музыка", "🎵 Українська музика",
+        "🌐 Сменить язык", "🌐 Змінити мову",
+        "🎬 Инструкция", "🎬 Інструкція",
+        "⚠ Пожаловаться / Написать админу", "⚠️ Поскаржитися / Написати адміну",
+        "❌ Завершить диалог", "❌ Завершити діалог"
+    ]
+
+    if text in ["⚠️ Пожаловаться / Написать админу", "⚠ Поскаржитися / Написати адміну"]:
+        user_support_mode.add(user_id)
+        
+        kb = ReplyKeyboardMarkup(resize_keyboard=True)
+        exit_btn = "❌ Завершити діалог" if lang == "ua" else "❌ Завершить диалог"
+        kb.row(KeyboardButton(exit_btn))
+        
+        support_prompt = "✍ Режим діалогу з адміністратором активовано. Пишіть скільки завгодно повідомлень нижче:" if lang == "ua" else "✍ Режим диалога с администратором активирован. Пишите сколько угодно сообщений ниже:"
+        bot.send_message(message.chat.id, support_prompt, reply_markup=kb)
+        return
+
+    if text in ["❌ Завершить диалог", "❌ Завершити діалог"]:
+        if user_id in user_support_mode:
+            user_support_mode.remove(user_id)
+        exit_text = "✅ Діалог завершено. Повертаємось у головне меню:" if lang == "ua" else "✅ Диалог завершен. Возвращаемся в главное меню:"
+        bot.send_message(message.chat.id, exit_text, reply_markup=get_user_keyboard(lang, user_id))
+        return
+
+    admin_chat = config.get("admin_chat_id")
+    if admin_chat and user_id in user_support_mode and text and text not in ignored_texts and not text.startswith("/"):
+        try:
+            username_str = f"@{user.username}" if user.username else f"ID {user_id}"
+            markup = InlineKeyboardMarkup()
+            markup.row(InlineKeyboardButton("💬 Ответить (продолжить диалог)", callback_data=f"chat_with_{user_id}"))
+            
+            bot.send_message(admin_chat, f"📩 **Повідомлення від {username_str}** (в режимі діалогу):\n\n{text}", parse_mode="Markdown", reply_markup=markup)
+            bot.send_message(message.chat.id, "✅ Надіслано адміну.")
+        except Exception as e:
+            print(f"Error sending support message: {e}")
+        return
+
+    if text in ["🌐 Сменить язык", "🌐 Змінити мову"]:
+        markup = InlineKeyboardMarkup()
+        markup.row(
+            InlineKeyboardButton("🇺🇦 Українська", callback_data="setlang_ua"),
+            InlineKeyboardButton("🇷🇺 Русский", callback_data="setlang_ru")
+        )
+        bot.send_message(message.chat.id, TEXTS[lang]["lang_select"], reply_markup=markup)
+        return
+    elif text in ["🎬 Инструкция", "🎬 Інструкція"]:
+        instr = "Отправьте ровно 3 фотографии (или альбомом), и бот автоматически соберет из них видео в формате 4:3 с фильтром!" if lang == "ru" else "Надішліть рівно 3 фотографії (або альбомом), і бот автоматично збере з них відео у форматі 4:3 із фільтром!"
+        bot.send_message(message.chat.id, instr, reply_markup=get_user_keyboard(lang, user_id))
+        return
+    elif text in ["🎵 Украинская музыка", "🎵 Українська музика"]:
+        send_random_ukr_music(message.chat.id, lang, user_id)
+        return
+
+    # Накопление и обработка фотографий
+    if message.content_type == 'photo':
+        chat_id = message.chat.id
+        
+        if not config.get("video_creation_enabled", True) and not is_admin:
+            bot.reply_to(message, TEXTS[lang]["video_disabled_for_users"], reply_markup=get_user_keyboard(lang, user_id))
+            return
+
+        try:
+            file_info = bot.get_file(message.photo[-1].file_id)
+            downloaded_file = bot.download_file(file_info.file_path)
+            
+            if chat_id not in user_photos_buffer:
+                user_photos_buffer[chat_id] = []
+            user_photos_buffer[chat_id].append(downloaded_file)
+
+            current_count = len(user_photos_buffer[chat_id])
+
+            if current_count < 3:
+                msg_text = TEXTS[lang]["photo_saved"].format(current_count)
+                bot.reply_to(message, msg_text, reply_markup=get_user_keyboard(lang, user_id))
+            else:
+                sub_photos = user_photos_buffer[chat_id][:3]
+                user_photos_buffer[chat_id] = [] # очищаем буфер
+
+                bot.send_message(chat_id, TEXTS[lang]["rendering"], reply_markup=get_user_keyboard(lang, user_id))
+                generate_video_from_photos(chat_id, sub_photos, lang, video_index=random.randint(100, 999))
+
+        except Exception as e:
+            bot.send_message(chat_id, f"❌ Error: {e}", reply_markup=get_user_keyboard(lang, user_id))
+
+def send_random_ukr_music(chat_id, lang, user_id):
+    track_query = random.choice(UKR_TRACKS)
+    msg = bot.send_message(chat_id, TEXTS[lang]["music_downloading"])
+    
+    audio_path = os.path.join(BASE_DIR, f"track_{chat_id}.mp3")
+    
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'outtmpl': os.path.join(BASE_DIR, f"track_{chat_id}.%(ext)s"),
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+        'default_search': 'ytsearch1',
+        'quiet': True
+    }
+    
+    try:
+        real_title = track_query
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(track_query, download=True)
+            if 'entries' in info:
+                info = info['entries'][0]
+            real_title = info.get('title', track_query)
+            
+        actual_file = None
+        for f in os.listdir(BASE_DIR):
+            if f.startswith(f"track_{chat_id}") and f.endswith(".mp3"):
+                actual_file = os.path.join(BASE_DIR, f)
+                break
+                
+        if actual_file and os.path.exists(actual_file):
+            with open(actual_file, 'rb') as audio:
+                bot.send_audio(
+                    chat_id, 
+                    audio, 
+                    caption=f"🎵 {real_title}", 
+                    title=real_title, 
+                    reply_markup=get_user_keyboard(lang, user_id)
+                )
+            bot.delete_message(chat_id, msg.message_id)
+            os.remove(actual_file)
+        else:
+            bot.edit_message_text(TEXTS[lang]["music_error"], chat_id, msg.message_id)
+            
+    except Exception as e:
+        print(f"Music download error: {e}")
+        try:
+            bot.edit_message_text(TEXTS[lang]["music_error"], chat_id, msg.message_id)
+        except:
+            pass
+        
+    if os.path.exists(audio_path):
+        try: os.remove(audio_path)
+        except: pass
+    gc.collect()
+
 def generate_video_from_photos(chat_id, photo_bytes_list, lang, video_index=1):
     output_path = os.path.join(BASE_DIR, f"output_{chat_id}_{video_index}.mp4")
     text_img_path = os.path.join(BASE_DIR, f"text_{chat_id}_{video_index}.png")
-    temp_files = [text_img_path, output_path]
+    temp_files = [text_img_path]
 
     try:
         chosen_quote = random.choice(QUOTES[lang])
@@ -194,33 +689,19 @@ def generate_video_from_photos(chat_id, photo_bytes_list, lang, video_index=1):
 
         clips = []
         sequence_indices = []
-        for i in range(25): # 25 кадрів по 0.2 сек = рівно 5 секунд відео
+        for i in range(25):
             sequence_indices.append(i % len(photo_bytes_list))
-
-        # Випадковий унікальний фільтр для цього відео
-        filter_types = ["noir", "contrast", "bright", "matte", "vintage"]
-        chosen_filter = random.choice(filter_types)
 
         for i, photo_idx in enumerate(sequence_indices):
             p_bytes = photo_bytes_list[photo_idx]
+            
             img = Image.open(io.BytesIO(p_bytes)).convert("RGB")
             
-            if chosen_filter == "noir":
-                img = ImageOps.grayscale(img)
-                img = ImageEnhance.Contrast(img).enhance(1.5)
-            elif chosen_filter == "matte":
-                img = ImageOps.grayscale(img)
-                img = ImageEnhance.Brightness(img).enhance(0.85)
-                img = ImageEnhance.Contrast(img).enhance(1.1)
-            elif chosen_filter == "bright":
-                img = ImageEnhance.Brightness(img).enhance(1.25)
-            elif chosen_filter == "vintage":
-                img = ImageEnhance.Color(img).enhance(0.4)
-                img = ImageEnhance.Contrast(img).enhance(1.2)
-            else:
-                img = ImageEnhance.Color(img).enhance(0.7)
+            # Фільтр увімкнено завжди для кожного кадру (стиль Noir / кінематографічний чорно-білий контраст)
+            img = ImageOps.grayscale(img)
+            img = ImageEnhance.Contrast(img).enhance(1.5)
 
-            # Обрізка під формат 4:3
+            # Строгая обрезка под формат 4:3
             img_w, img_h = img.size
             target_aspect = 4 / 3  
             current_aspect = img_w / img_h
@@ -233,226 +714,54 @@ def generate_video_from_photos(chat_id, photo_bytes_list, lang, video_index=1):
                 offset = (img_h - new_h) // 2
                 img = img.crop((0, offset, img_w, offset + new_h))
 
+            # Разрешение 960x720 (соотношение 4:3)
             img = img.resize((960, 720), Image.Resampling.LANCZOS)
 
             temp_p = os.path.join(BASE_DIR, f"temp_{chat_id}_{video_index}_{i}.jpg")
             img.save(temp_p, "JPEG", quality=95)
             temp_files.append(temp_p)
             
-            # Зміна кадру кожні 0.2 секунди
-            img_clip = ImageClip(temp_p).with_duration(0.2)
+            img_clip = ImageClip(temp_p, duration=0.2).with_effects([vfx.MultiplyColor(0.55)])
             clips.append(img_clip)
 
         video = concatenate_videoclips(clips, method="compose")
-        txt_clip = ImageClip(text_img_path).with_duration(video.duration)
-        final_video = CompositeVideoClip([video, txt_clip])
-        
+        txt_clip = ImageClip(text_img_path, duration=5.0)
+
+        final_video = CompositeVideoClip([
+            video,
+            txt_clip.with_position(('center', 'center'))
+        ])
+
         final_video.write_videofile(
             output_path, 
-            fps=24, 
-            codec="libx264", 
-            audio=False, 
+            fps=15, 
+            codec='libx264', 
+            preset='ultrafast', 
+            audio=False,
             logger=None
         )
 
-        with open(output_path, 'rb') as vid_file:
-            bot.send_video(chat_id, vid_file, reply_markup=get_user_keyboard(lang, chat_id))
+        with open(output_path, 'rb') as vid:
+            bot.send_video(chat_id, vid, caption=f"✅ Готово (формат 4:3 з фільтром)!", reply_markup=get_user_keyboard(lang, chat_id))
 
     except Exception as e:
-        print(f"Video generation error: {e}")
-        bot.send_message(chat_id, "❌ Помилка при створенні відео.", reply_markup=get_user_keyboard(lang, chat_id))
-    
-    finally:
-        for p in temp_files:
-            if os.path.exists(p):
-                try: os.remove(p)
-                except: pass
-        gc.collect()
+        bot.send_message(chat_id, f"❌ Render error: {e}", reply_markup=get_user_keyboard(lang, chat_id))
 
-# --- ОБРОБНИКИ ПОВІДОМЛЕНЬ ТА КОМАНД ---
-@bot.message_handler(commands=['start'])
-def cmd_start(message):
-    chat_id = message.chat.id
-    
-    # Перевірка чи бот активний для користувачів
-    if not bot_config["bot_active"] and chat_id != ADMIN_ID:
-        bot.send_message(chat_id, "⚠️ Бот тимчасово на технічному обслуговуванні.")
-        return
+    for tf in temp_files:
+        if os.path.exists(tf):
+            try: os.remove(tf)
+            except: pass
 
-    # Додаємо до списку користувачів, якщо ще немає
-    if chat_id not in allowed_users and chat_id != ADMIN_ID:
-        allowed_users.append(chat_id)
-        save_json(USERS_FILE, allowed_users)
+    if os.path.exists(output_path):
+        try: os.remove(output_path)
+        except: pass
 
-    lang = get_user_lang(chat_id)
-    
-    if chat_id == ADMIN_ID and chat_id not in admin_as_user_mode:
-        bot.send_message(chat_id, "👑 Вітаю, пане Адмін!", reply_markup=get_admin_keyboard())
-    else:
-        welcome_text = "Привіт! Надішли мені **3 або більше фотографій**, і я змонтую для тебе круте відео у форматі 4:3!" if lang == "uk" else "Привет! Пришли мне **3 или более фотографии**, и я смонтирую для тебя крутое видео в формате 4:3!"
-        bot.send_message(chat_id, welcome_text, reply_markup=get_user_keyboard(lang, chat_id), parse_mode="Markdown")
+    gc.collect()
 
-@bot.message_handler(func=lambda msg: msg.text in ["🌐 Змінити мову", "🌐 Сменить язык"])
-def change_language_handler(message):
-    chat_id = message.chat.id
-    current_lang = get_user_lang(chat_id)
-    new_lang = "ru" if current_lang == "uk" else "uk"
-    set_user_lang(chat_id, new_lang)
-    
-    text = "Мову змінено на українську 🇺🇦" if new_lang == "uk" else "Язык изменен на русский 🇷🇺"
-    bot.send_message(chat_id, text, reply_markup=get_user_keyboard(new_lang, chat_id))
+if __name__ == '__main__':
+    t = threading.Thread(target=run_web)
+    t.daemon = True
+    t.start()
 
-@bot.message_handler(func=lambda msg: msg.text in ["🎬 Інструкція", "🎬 Инструкция"])
-def instruction_handler(message):
-    chat_id = message.chat.id
-    lang = get_user_lang(chat_id)
-    text = (
-        "📖 **Як користуватися ботом:**\n\n"
-        "1. Надішли в чат **від 3 фотографій** підряд.\n"
-        "2. Бот автоматично обробить їх, накладе рандомний фільтр та згенерує відео у форматі 4:3 зі зміною кадрів кожні 0.2 сек.\n"
-        "3. Також ти можеш завантажити українську музику через відповідне меню!"
-        if lang == "uk" else
-        "📖 **Как пользоваться ботом:**\n\n"
-        "1. Пришли в чат **от 3 фотографий** подряд.\n"
-        "2. Бот автоматически обработает их, наложит рандомный фильтр и сгенерирует видео в формате 4:3 со сменой кадров каждые 0.2 сек.\n"
-        "3. Также ты можешь скачать украинскую музыку через соответствующее меню!"
-    )
-    bot.send_message(chat_id, text, reply_markup=get_user_keyboard(lang, chat_id), parse_mode="Markdown")
-
-@bot.message_handler(func=lambda msg: msg.text in ["🎵 Українська музика", "🎵 Украинская музыка"])
-def ukr_music_handler(message):
-    chat_id = message.chat.id
-    lang = get_user_lang(chat_id)
-    msg = bot.send_message(chat_id, "🎵 Введіть назву треку або виконавця для пошуку:" if lang == "uk" else "🎵 Введите название трека или исполнителя для поиска:")
-    bot.register_next_step_handler(msg, process_music_search)
-
-def process_music_search(message):
-    chat_id = message.chat.id
-    lang = get_user_lang(chat_id)
-    query = message.text
-    
-    bot.send_message(chat_id, "⏳ Шукаю та завантажую музику..." if lang == "uk" else "⏳ Ищу и скачиваю музыку...")
-    
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'default_search': 'ytsearch1',
-        'noplaylist': True,
-        'outtmpl': os.path.join(BASE_DIR, 'music_temp.%(ext)s'),
-        'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}]
-    }
-    
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(query, download=True)
-            if 'entries' in info:
-                info = info['entries'][0]
-            filename = ydl.prepare_filename(info)
-            audio_path = os.path.splitext(filename)[0] + '.mp3'
-            
-        with open(audio_path, 'rb') as audio_file:
-            bot.send_audio(chat_id, audio_file, reply_markup=get_user_keyboard(lang, chat_id))
-            
-        if os.path.exists(audio_path):
-            os.remove(audio_path)
-    except Exception as e:
-        print(f"Music search error: {e}")
-        bot.send_message(chat_id, "❌ Не вдалося знайти або завантажити трек.", reply_markup=get_user_keyboard(lang, chat_id))
-
-# --- АДМІН-ПАНЕЛЬ ---
-@bot.message_handler(func=lambda msg: msg.chat.id == ADMIN_ID)
-def admin_panel_dispatcher(message):
-    chat_id = message.chat.id
-    text = message.text
-
-    if chat_id in admin_as_user_mode:
-        if text == "👑 Повернутися в адмін-панель":
-            admin_as_user_mode.remove(chat_id)
-            bot.send_message(chat_id, "Ви повернулися в адмін-панель.", reply_markup=get_admin_keyboard())
-            return
-        # Якщо в режимі юзера - передаємо далі на стандартну обробку фото/тексту
-        handle_user_messages(message)
-        return
-
-    if text == "👥 Список користувачів":
-        bot.send_message(chat_id, f"👥 Кількість користувачів: {len(allowed_users)}")
-    elif text == "📢 Розсилка":
-        admin_broadcast_mode.add(chat_id)
-        bot.send_message(chat_id, "✍️ Надішліть текст для розсилки всім користувачам:")
-    elif text == "⚙️ Увімк./Вимк. бота":
-        bot_config["bot_active"] = not bot_config["bot_active"]
-        save_json(CONFIG_FILE, bot_config)
-        status = "Увімкнено ✅" if bot_config["bot_active"] else "Вимкнено ❌"
-        bot.send_message(chat_id, f"Статус бота: {status}", reply_markup=get_admin_keyboard())
-    elif text == "🎬 Увімк./Вимк. генерацію відео":
-        bot_config["video_enabled"] = not bot_config["video_enabled"]
-        save_json(CONFIG_FILE, bot_config)
-        status = "Увімкнено ✅" if bot_config["video_enabled"] else "Вимкнено ❌"
-        bot.send_message(chat_id, f"Генерація відео: {status}", reply_markup=get_admin_keyboard())
-    elif text == "👤 Вийти в режим юзера":
-        admin_as_user_mode.add(chat_id)
-        lang = get_user_lang(chat_id)
-        bot.send_message(chat_id, "Ви перейшли в режим користувача.", reply_markup=get_user_keyboard(lang, chat_id))
-    else:
-        if chat_id in admin_broadcast_mode:
-            admin_broadcast_mode.remove(chat_id)
-            count = 0
-            for uid in allowed_users:
-                try:
-                    bot.send_message(uid, text)
-                    count += 1
-                except:
-                    pass
-            bot.send_message(chat_id, f"📢 Розсилку завершено. Успішно надіслано: {count} користувачам.", reply_markup=get_admin_keyboard())
-        else:
-            bot.send_message(chat_id, "Оберіть дію на клавіатурі:", reply_markup=get_admin_keyboard())
-
-# --- ОТРИМАННЯ ФОТОГРАФІЙ ВІД КОРИСТУВАЧІВ ---
-@bot.message_handler(content_types=['photo'])
-def handle_photos(message):
-    chat_id = message.chat.id
-    
-    if not bot_config["bot_active"] and chat_id != ADMIN_ID:
-        return
-        
-    if not bot_config["video_enabled"] and chat_id != ADMIN_ID:
-        lang = get_user_lang(chat_id)
-        bot.send_message(chat_id, "⚠️ Генерація відео тимчасово вимкнена адміністратором.", reply_markup=get_user_keyboard(lang, chat_id))
-        return
-
-    # Зберігаємо найвищу якість фото
-    file_info = bot.get_file(message.photo[-1].file_id)
-    downloaded_file = bot.download_file(file_info.file_path)
-
-    if chat_id not in user_photos_buffer:
-        user_photos_buffer[chat_id] = []
-
-    user_photos_buffer[chat_id].append(downloaded_file)
-    photos_count = len(user_photos_buffer[chat_id])
-    lang = get_user_lang(chat_id)
-
-    if photos_count < 3:
-        msg = f"📸 Отримано фото {photos_count}/3. Надішліть ще." if lang == "uk" else f"📸 Получено фото {photos_count}/3. Пришлите еще."
-        bot.send_message(chat_id, msg)
-    else:
-        bot.send_message(chat_id, "🎬 Починаю генерацію відео (зміна кадрів кожні 0.2с)..." if lang == "uk" else "🎬 Начинаю генерацию видео (смена кадров каждые 0.2с)...")
-        photos_to_process = user_photos_buffer[chat_id].copy()
-        user_photos_buffer[chat_id] = []  # Очищуємо буфер
-        
-        # Запускаємо рендеринг у фоновому потоці, щоб не блокувати бота
-        threading.Thread(target=generate_video_from_photos, args=(chat_id, photos_to_process, lang)).start()
-
-@bot.message_handler(func=lambda message: True)
-def handle_user_messages(message):
-    chat_id = message.chat.id
-    lang = get_user_lang(chat_id)
-    bot.send_message(chat_id, "Будь ласка, надішліть фотографії для створення відео 📸" if lang == "uk" else "Пожалуйста, пришлите фотографии для создания видео 📸", reply_markup=get_user_keyboard(lang, chat_id))
-
-# --- ЗАПУСК БОТА ---
-if __name__ == "__main__":
-    keep_alive() # Запускаємо Flask на фоновому потоці для хостингу
-    print("Бот успішно запущено!")
-    while True:
-        try:
-            bot.infinity_polling(timeout=60, long_polling_timeout=60)
-        except Exception as e:
-            print(f"Polling error: {e}")
+    print("Бот та вебсервер запущені!")
+    bot.polling(none_stop=True)

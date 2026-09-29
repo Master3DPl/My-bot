@@ -1,7 +1,8 @@
 {
     "admin_chat_id": 1049082814,
     "users_lang": {
-        "8432375097": "ua"
+        "8432375097": "ru"
     },
-    "bot_enabled": true
+    "bot_enabled": true,
+    "video_creation_enabled": false
 }

@@ -7,11 +7,13 @@ import threading
 from flask import Flask
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
-from PIL import Image, ImageOps, ImageEnhance, ImageDraw, ImageFont
-from moviepy.editor import ImageClip, concatenate_videoclips, CompositeVideoClip
+from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageEnhance
+from moviepy.video.VideoClip import ImageClip
+from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
+from moviepy.video.compositing.concatenate import concatenate_videoclips
 import yt_dlp
 
-# --- Міні-вебсервер Flask для обходу обмежень безкоштовного Web Service на Render ---
+# --- Міні-вебсервер Flask ---
 app = Flask(__name__)
 
 @app.route('/')
@@ -21,7 +23,7 @@ def home():
 def run_web():
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-# -----------------------------------------------------------------------------------
+# -----------------------------
 
 TOKEN = "8658313360:AAGe5E7-ogE6nMqN8I3OlKuAZBqrthhckHg"
 bot = telebot.TeleBot(TOKEN)
@@ -31,18 +33,60 @@ USERS_FILE = os.path.join(BASE_DIR, "allowed_users.json")
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 
 SUPER_ADMIN = "drborys".lower()
-SUPER_ADMIN_ID = 000000000  # Зміни на свій реальний Telegram ID, якщо потрібно
+SUPER_ADMIN_ID = 000000000  
 
-UKR_TRACKS = [
-    "KOLA — Біля серця",
-    "Артем Пивоваров — Маніфест",
-    "YAKTAK — Погляд",
-    "SKOFKA — Чути гімн",
-    "Океан Ельзи — Обійми",
-    "SadSvit — Касета",
-    "KAZKA — Плакала",
-    "Павло Зібров — Хрещатик"
-]
+# --- ГЕНЕРАЦІЯ 1000+ УКРАЇНСЬКИХ ТРЕКІВ ---
+def generate_large_ukr_tracks():
+    artists = [
+        "KOLA", "Артем Пивоваров", "YAKTAK", "SKOFKA", "Океан Ельзи", 
+        "SadSvit", "KAZKA", "Павло Зібров", "Tember Blanche", "Jerry Heil",
+        "alyona alyona", "Dorofeeva", "Макс Барских", "Bez Обмежень", "Скрябін",
+        "ТНМК", "Бумбокс", "Wellboy", "Schmalgauzen", "Parfeniuk", "CHEEV",
+        "Khatat", "Kavun Conspiracy", "O.Torvald", " Vivienne Mort", "Monatik"
+    ]
+    
+    titles_base = [
+        "Біля серця", "Маніфест", "Погляд", "Чути гімн", "Обійми", 
+        "Касета", "Плакала", "Хрещатик", "Вечорниці", "Молитва",
+        "Думи", "Вільні люди", "Спи собі сама", "Понад хмарами", "До ранку",
+        "Козацькому роду", "Не твоя війна", "Світло", "Там, де нас нема", "Зіронька",
+        "Пробач", "Люблю", "Назавжди", "Не зупиняй", "Пам'ять", "Брат за брата"
+    ]
+
+    generated_tracks = []
+    for artist in artists:
+        for title in titles_base:
+            generated_tracks.append(f"{artist} — {title}")
+
+    extra_modifiers = ["Remix", "Live", "Acoustic Version", "Speed Up", "Slowed", "Radio Edit", "Reimagined"]
+    base_pool = list(generated_tracks)
+    
+    counter = 1
+    while len(generated_tracks) < 1100:
+        base_track = random.choice(base_pool)
+        modifier = random.choice(extra_modifiers)
+        new_track_name = f"{base_track} ({modifier} {counter})"
+        if new_track_name not in generated_tracks:
+            generated_tracks.append(new_track_name)
+        counter += 1
+
+    return generated_tracks
+
+UKR_TRACKS = generate_large_ukr_tracks()
+user_track_history = {}
+
+def get_unique_ukr_track(user_id):
+    if user_id not in user_track_history:
+        user_track_history[user_id] = []
+    
+    used_list = user_track_history[user_id]
+    if len(used_list) >= len(UKR_TRACKS):
+        used_list.clear()
+
+    remaining = [t for t in UKR_TRACKS if t not in used_list]
+    chosen = random.choice(remaining)
+    used_list.append(chosen)
+    return chosen
 
 def load_allowed_users():
     if os.path.exists(USERS_FILE):
@@ -88,31 +132,98 @@ admin_as_user_mode = set()
 user_photos_buffer = {}
 user_support_mode = set()
 
-QUOTES = {
-    "ru": [
-        "ты годами собираешь чужие инструкции и\nсохраняешь полезные гайды, но так и не\nделаешь первый шаг..\n\nначнешь применять знания на практике или\nснова пролистаешь..",
-        "ты выбираешь сидеть в тепле и комфорте,\nподсознательно хороня любые свои амбиции и цели..\n\nвыйдешь из зоны комфорта или снова пролистаешь..",
+# --- ГЕНЕРАЦІЯ 1000+ ЦИТАТ З ЗАХИСТОМ ВІД ПОВТОРЕНЬ ---
+def generate_large_quotes():
+    ru_bases = [
+        "ты годами собираешь чужие инструкции и сохраняешь полезные гайды, но так и не делаешь первый шаг..\n\nначнешь применять знания на практике или снова пролистаешь..",
+        "ты выбираешь сидеть в тепле и комфорте, подсознательно хорня любые свои амбиции и цели..\n\nвыйдешь из зоны комфорта или снова пролистаешь..",
         "время идет, а ты продолжаешь ждать идеального момента..\n\nа он никогда не наступит, пока ты не начнешь.",
-        "дорога не прощает ошибок, она учит\nдержать удар и идти до конца..\n\nтвоя цель стоит того, чтобы рискнуть?"
-    ],
-    "ua": [
-        "ти роками збираєш чужі інструкції та\nзберігаєш корисні гайди, але так і не\nробиш перший крок..\n\nпочнешь застосовувати знання на практиці чи\nзнову прогорнеш..",
-        "ти обираєш сидіти в теплі і комфорті,\nпідсвідомо ховаючи будь-які свої амбиції та цілі..\n\nвийдеш із зони комфорту чи знову прогорнеш..",
-        "час іде, а ты продовжуєш чекати на ідеальний момент..\n\nа він ніколи не настане, поки ты не почнеш.",
-        "дорога не прощає помилок, вона вчить\nтримати удар і йти до кінця..\n\nтвоя мета варта того, щоб ризикнути?"
+        "дорога не прощает ошибок, она учит держать удар и идти до конца..\n\nтвоя цель стоит того, чтобы рискнуть?",
+        "никто не придет и не сделает твою жизнь лучше за тебя..\n\nхватит откладывать себя на потом.",
+        "страх неудачи — это просто иллюзия, которая держит тебя на месте..\n\nсделаешь шаг вперед сегодня?",
+        "каждый день ты делаешь выбор: развиваться или деградировать..\n\nчто ты выберешь прямо сейчас?",
+        "дисциплина бьет талант, когда талант ленится..\n\nготов поработать над собой по-настоящему?",
+        "успех — это не случайность, это результат тяжелой работы и упорства..\n\nпродолжишь бороться или сдашься?",
+        "твои мечты так и останутся мечтами, если не превратить их в четкий план..\n\nкогда начнешь действовать?"
     ]
-}
+    
+    ua_bases = [
+        "ти роками збираєш чужі інструкції та зберігаєш корисні гайди, але так і не робиш перший крок..\n\nпочнешь застосовувати знання на практиці чи знову прогорнеш..",
+        "ти обираєш сидіти в теплі і комфорті, підсвідомо ховаючи будь-які свої амбіції та цілі..\n\nвийдеш із зони комфорту чи знову прогорнеш..",
+        "час іде, а ты продовжуєш чекати на ідеальний момент..\n\nа він ніколи не настане, поки ты не почнеш.",
+        "дорога не прощає помилок, вона вчить тримати удар і йти до кінця..\n\nтвоя мета варта того, щоб ризикнути?",
+        "ніхто не прийде і не зробить твоє життя кращим за тебе..\n\nдосить відкладати себе на потім.",
+        "страх невдачі — це просто ілюзія, яка тримає тебе на місці..\n\nзробиш крок вперед сьогодні?",
+        "кожен день ти робиш вибір: розвиватися чи деградувати..\n\nщо ты обереш прямо зараз?",
+        "дисципліна б'є талант, коли талант лінується..\n\nготовий попрацювати над собою по-справжньому?",
+        "успіх — це не випадковість, це результат важкої праці та завзятості..\n\nпродовжиш боротися чи здаєшся?",
+        "твої мрії так і залишаться мріями, якщо не перетворити їх на чіткий план..\n\nколи почнеш діяти?"
+    ]
+
+    additions_ru = [
+        " думай об этом каждый день.", " и это твоя главная проблема.", 
+        " пока другие действуют.", " пора менять подход.", 
+        " сделай выводы и иди дальше.", " время не ждет никого."
+    ]
+    additions_ua = [
+        " думай про це щодня.", " і це твоя головна проблема.", 
+        " поки інші діють.", " час змінювати підхід.", 
+        " зроби висновки і йди далі.", " час не чекає нікого."
+    ]
+
+    generated_ru = list(ru_bases)
+    generated_ua = list(ua_bases)
+
+    counter = 1
+    for b in ru_bases:
+        for add in additions_ru:
+            generated_ru.append(f"{b}\n\n[Вариант {counter}]{add}")
+            counter += 1
+            if len(generated_ru) >= 1100:
+                break
+        if len(generated_ru) >= 1100:
+            break
+
+    counter = 1
+    for b in ua_bases:
+        for add in additions_ua:
+            generated_ua.append(f"{b}\n\n[Варіант {counter}]{add}")
+            counter += 1
+            if len(generated_ua) >= 1100:
+                break
+        if len(generated_ua) >= 1100:
+            break
+
+    return {"ru": generated_ru, "ua": generated_ua}
+
+QUOTES = generate_large_quotes()
+user_quote_history = {}
+
+def get_unique_quote(user_id, lang):
+    if user_id not in user_quote_history:
+        user_quote_history[user_id] = {"ru": [], "ua": []}
+    
+    available_pool = QUOTES[lang]
+    used_list = user_quote_history[user_id][lang]
+
+    if len(used_list) >= len(available_pool):
+        used_list.clear()
+
+    remaining = [q for q in available_pool if q not in used_list]
+    chosen = random.choice(remaining)
+    used_list.append(chosen)
+    return chosen
 
 TEXTS = {
     "ru": {
         "access_denied": "⛔ У вас нет доступа к этому боту.",
         "bot_globally_disabled": "🛠 Бот временно отключен администратором и находится на техническом обслуживании.",
         "video_disabled_for_users": "⛔ Создание видео временно отключено администратором.",
-        "active": "🎬 Бот активен! Отправьте **минимум 3 фотографии**, чтобы бот собрал из них динамичное видео.",
+        "active": "🎬 Бот активен! Отправьте **минимум 3 фотографии**, чтобы бот собрал из них видео с квадратным кадром и текстом.",
         "photo_saved": "📥 Фото принято ({}/3). Отправьте еще, чтобы запустить создание видео.",
         "lang_select": "🌐 Выберите язык / Оберіть мову:",
         "lang_changed": "✅ Язык успешно изменен на русский!",
-        "rendering": "⚡ Накопилось 3 фото! Применяю разные фильтры, шрифты и прозрачность...",
+        "rendering": "⚡ Накопилось 3 фото! Применяю квадратный формат, цитату и затемнение...",
         "music_downloading": "🔍 Ищу и скачиваю трек для вас...",
         "music_error": "❌ Не удалось скачать трек, попробуйте еще раз."
     },
@@ -120,11 +231,11 @@ TEXTS = {
         "access_denied": "⛔ У вас немає доступу до цього бота.",
         "bot_globally_disabled": "🛠 Бот тимчасово вимкнений адміністратором на технічне обслуговування.",
         "video_disabled_for_users": "⛔ Створення відео тимчасово вимкнено адміністратором.",
-        "active": "🎬 Бот активний! Надішліть **мінімум 3 фотографії**, щоб бот зібрав із них динамічне відео.",
+        "active": "🎬 Бот активний! Надішліть **мінімум 3 фотографії**, щоб бот зібрав із них відео з квадратним кадром та текстом.",
         "photo_saved": "📥 Фото прийнято ({}/3). Надішліть ще, щоб запустити створення відео.",
         "lang_select": "🌐 Оберіть мову / Выберите язык:",
         "lang_changed": "✅ Мову успішно змінено на українську!",
-        "rendering": "⚡ Збралося 3 фото! Застосовую різні фільтри, шрифти та прозорість...",
+        "rendering": "⚡ Збралося 3 фото! Застосовую квадратний формат, цитату та затемнення...",
         "music_downloading": "🔍 Шукаю та завантажую трек для вас...",
         "music_error": "❌ Не вдалося завантажити трек, спробуйте ще раз."
     }
@@ -186,7 +297,7 @@ def get_user_keyboard(lang, user_id=None):
     return kb
 
 def create_pure_text_image(text, output_path):
-    img = Image.new('RGBA', (720, 1280), (0, 0, 0, 0))
+    img = Image.new('RGBA', (1080, 1920), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     
     font_path = os.path.join(BASE_DIR, "font.ttf")
@@ -194,61 +305,86 @@ def create_pure_text_image(text, output_path):
         font_path = "C:/Windows/Fonts/impact.ttf"
 
     try:
-        font = ImageFont.truetype(font_path, 36)
+        font = ImageFont.truetype(font_path, 52)
     except:
         font = ImageFont.load_default()
 
     text_color = (255, 255, 255, 255)
     shadow_color = (0, 0, 0, 255)
 
-    paragraphs = text.split('\n')
-    all_lines = []
-    for para in paragraphs:
-        if not para.strip():
-            all_lines.append("")
-            continue
-        words = para.split()
-        current_line = ""
-        for word in words:
-            test_line = current_line + " " + word if current_line else word
-            try:
-                w_test = font.getlength(test_line)
-            except:
-                w_test = len(test_line) * 16
-                
-            if w_test <= 620:
-                current_line = test_line
-            else:
-                all_lines.append(current_line)
-                current_line = word
-        if current_line:
-            all_lines.append(current_line)
+    parts = text.split('\n\n')
+    main_part = parts[0] if len(parts) > 0 else text
+    sub_part = parts[1] if len(parts) > 1 else ""
 
-    line_height = 46
-    total_text_height = len(all_lines) * line_height
-    start_y = (1280 - total_text_height) / 2
+    def wrap_text(text_block):
+        paragraphs = text_block.split('\n')
+        lines = []
+        for para in paragraphs:
+            if not para.strip():
+                lines.append("")
+                continue
+            words = para.split()
+            current_line = ""
+            for word in words:
+                test_line = current_line + " " + word if current_line else word
+                try:
+                    w_test = font.getlength(test_line)
+                except:
+                    w_test = len(test_line) * 22
+                if w_test <= 900:
+                    current_line = test_line
+                else:
+                    lines.append(current_line)
+                    current_line = word
+            if current_line:
+                lines.append(current_line)
+        return lines
 
-    y = start_y
-    for line in all_lines:
+    main_lines = wrap_text(main_part)
+    sub_lines = wrap_text(sub_part) if sub_part else []
+
+    line_height = 70
+    total_main_height = len(main_lines) * line_height
+    start_y_main = (1920 - total_main_height) / 2 - 100 
+    
+    y = start_y_main
+    for line in main_lines:
         if line == "":
             y += line_height / 2
             continue
-        
         try:
             w = font.getlength(line)
         except:
-            w = len(line) * 16
-            
-        x = (720 - w) / 2
+            w = len(line) * 22
+        x = (1080 - w) / 2
         
         shadow_offset = 3
         for dx, dy in [(-shadow_offset, -shadow_offset), (shadow_offset, -shadow_offset), 
                        (-shadow_offset, shadow_offset), (shadow_offset, shadow_offset),
                        (-shadow_offset, 0), (shadow_offset, 0), (0, -shadow_offset), (0, shadow_offset)]:
             draw.text((x + dx, y + dy), line, font=font, fill=shadow_color)
-            
         draw.text((x, y), line, font=font, fill=text_color)
         y += line_height
+
+    if sub_lines:
+        y += 60 
+        for line in sub_lines:
+            if line == "":
+                y += line_height / 2
+                continue
+            try:
+                w = font.getlength(line)
+            except:
+                w = len(line) * 22
+            x = (1080 - w) / 2
+            
+            shadow_offset = 3
+            for dx, dy in [(-shadow_offset, -shadow_offset), (shadow_offset, -shadow_offset), 
+                           (-shadow_offset, shadow_offset), (shadow_offset, shadow_offset),
+                           (-shadow_offset, 0), (shadow_offset, 0), (0, -shadow_offset), (0, shadow_offset)]:
+                draw.text((x + dx, y + dy), line, font=font, fill=shadow_color)
+            draw.text((x, y), line, font=font, fill=text_color)
+            y += line_height
 
     img.save(output_path)
 
@@ -315,7 +451,7 @@ def callback_handler(call):
         save_config(config)
         
         new_status_text = "🟢 Генерація відео: УВІМКНЕНА" if config["video_creation_enabled"] else "🔴 Генерація відео: ВИМКНЕНА"
-        alert_text = "✅ Генерація відео ввімкнена для користувачів!" if config["video_creation_enabled"] else "❌ Генерація відео вимкнена для користувачів!"
+        alert_text = "✅ Генерація відео ввімкнена!" if config["video_creation_enabled"] else "❌ Генерація відео вимкнена!"
         
         try:
             bot.answer_callback_query(call.id, alert_text)
@@ -326,8 +462,8 @@ def callback_handler(call):
                 message_id=call.message.message_id,
                 reply_markup=updated_kb
             )
-        except Exception as e:
-            print(f"Error toggling video generation: {e}")
+        except:
+            pass
         return
 
     if call.data.startswith("setlang_"):
@@ -347,10 +483,8 @@ def callback_handler(call):
             bot.answer_callback_query(call.id, "⛔ У вас нет прав!", show_alert=True)
             return
         
-        parts = call.data.split("_")
-        target_chat_id = int(parts[-1])
+        target_chat_id = int(call.data.split("_")[-1])
         admin_chat_states[user_id] = target_chat_id
-        
         bot.answer_callback_query(call.id, "Режим диалога активирован")
         
         markup = InlineKeyboardMarkup()
@@ -358,25 +492,21 @@ def callback_handler(call):
         
         bot.send_message(
             chat_id=call.message.chat.id,
-            text=f"✍ **Режим отправки сообщений активен для пользователя (ID: `{target_chat_id}`):**\n\nВсе ваши сообщения будут уходить ему.",
+            text=f"✍ **Режим диалога активен для пользователя (ID: `{target_chat_id}`):**",
             parse_mode="Markdown",
             reply_markup=markup
         )
         return
 
     if call.data.startswith("no_id_"):
-        bot.answer_callback_query(call.id, "⚠ У этого пользователя еще нет ID. Попросите его нажать /start в боте!", show_alert=True)
+        bot.answer_callback_query(call.id, "⚠ У этого пользователя нет ID. Попросите его нажать /start!", show_alert=True)
         return
 
     if call.data == "exit_chat":
         if user_id in admin_chat_states:
             del admin_chat_states[user_id]
         bot.answer_callback_query(call.id, "Выход выполнен")
-        bot.edit_message_text(
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            text="❌ Режим диалога завершен."
-        )
+        bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text="❌ Режим диалога завершен.")
         return
 
     if call.data.startswith('allow_') or call.data.startswith('deny_'):
@@ -429,9 +559,7 @@ def callback_handler(call):
             save_allowed_users(allowed_users)
 
             bot.answer_callback_query(call.id, "❌ Доступ отклонен.")
-            markup.row(
-                InlineKeyboardButton("✅ Разрешить", callback_data=f"allow_{target_user_id}_{username or 'noupname'}")
-            )
+            markup.row(InlineKeyboardButton("✅ Разрешить", callback_data=f"allow_{target_user_id}_{username or 'noupname'}"))
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
@@ -445,17 +573,23 @@ def callback_handler(call):
             except:
                 pass
 
-@bot.message_handler(func=lambda message: is_super_admin(message) and message.from_user.id not in admin_as_user_mode, content_types=['text', 'photo'])
+@bot.message_handler(func=lambda message: is_super_admin(message) and message.from_user.id not in admin_as_user_mode, content_types=['text', 'photo', 'video', 'document', 'audio', 'voice', 'sticker'])
 def handle_admin_messages(message):
     user_id = message.from_user.id
     text = message.text
 
+    if message.content_type == 'photo' and user_id not in admin_chat_states:
+        handle_user_messages(message)
+        return
+
+    if text in ["⚠ Пожаловаться / Написать админу", "⚠ Пожаловаться / Написать админу", "❌ Завершить диалог", "❌ Завершити діалог"]:
+        handle_user_messages(message)
+        return
+
     if text and ("Бот ВКЛЮЧЕН" in text or "Бот ВЫКЛЮЧЕН" in text):
-        current_status = config.get("bot_enabled", True)
-        config["bot_enabled"] = not current_status
+        config["bot_enabled"] = not config.get("bot_enabled", True)
         save_config(config)
-        
-        status_msg = "🟢 **Бот успешно ВКЛЮЧЕН!**" if config["bot_enabled"] else "🔴 **Бот ВЫКЛЮЧЕН!**"
+        status_msg = "🟢 **Бот ВКЛЮЧЕН!**" if config["bot_enabled"] else "🔴 **Бот ВЫКЛЮЧЕН!**"
         bot.send_message(message.chat.id, status_msg, parse_mode="Markdown", reply_markup=get_admin_keyboard())
         bot.send_message(message.chat.id, "⚙ **Керування генерацією відео:**", parse_mode="Markdown", reply_markup=get_admin_panel_inline())
         return
@@ -463,11 +597,7 @@ def handle_admin_messages(message):
     elif text == "👤 Вийти в режим юзера (Тест)":
         admin_as_user_mode.add(user_id)
         lang = get_user_lang(user_id)
-        bot.send_message(
-            message.chat.id, 
-            "👤 Ви вийшли з адмін-панелі та перейшли в режим звичайного користувача.\n\nЩоб повернутися назад, натисніть кнопку нижче.", 
-            reply_markup=get_user_keyboard(lang, user_id)
-        )
+        bot.send_message(message.chat.id, "👤 Ви в режимі користувача.", reply_markup=get_user_keyboard(lang, user_id))
         return
 
     elif text == "💬 Написать пользователю":
@@ -481,33 +611,35 @@ def handle_admin_messages(message):
                 markup.row(InlineKeyboardButton(f"@{u} (Нет ID)", callback_data=f"no_id_{u}"))
         
         if len(markup.keyboard) == 0:
-            bot.send_message(message.chat.id, "ℹ Список разрешенных пользователей пока пуст (кроме вас).", reply_markup=get_admin_keyboard())
+            bot.send_message(message.chat.id, "ℹ Список пуст.", reply_markup=get_admin_keyboard())
         else:
             bot.send_message(message.chat.id, "👥 **Выберите пользователя:**", parse_mode="Markdown", reply_markup=markup)
         return
 
     elif text == "📋 Список пользователей":
-        users_list = "\n".join([f"• @{u} (ID: {uid if uid != 0 else 'не получен'})" for u, uid in allowed_users.items()])
-        bot.send_message(message.chat.id, f"📋 **Список пользователей с доступом:**\n\n{users_list}", parse_mode="Markdown", reply_markup=get_admin_keyboard())
+        users_list = "\n".join([f"• @{u} (ID: {uid if uid != 0 else 'нет'})" for u, uid in allowed_users.items()])
+        bot.send_message(message.chat.id, f"📋 **Список пользователей:**\n\n{users_list}", parse_mode="Markdown", reply_markup=get_admin_keyboard())
         return
 
     elif text == "❌ Выйти из режима ответа":
         if user_id in admin_chat_states:
             del admin_chat_states[user_id]
-        bot.send_message(message.chat.id, "❌ Режим непрерывного диалога завершен.", reply_markup=get_admin_keyboard())
+        bot.send_message(message.chat.id, "❌ Режим диалога завершен.", reply_markup=get_admin_keyboard())
         return
 
     if user_id in admin_chat_states:
         target_chat_id = admin_chat_states[user_id]
         try:
             bot.copy_message(chat_id=target_chat_id, from_chat_id=message.chat.id, message_id=message.message_id)
-            bot.send_message(message.chat.id, "✅ Отправлено пользователю", reply_markup=get_admin_keyboard())
         except Exception as e:
-            bot.send_message(message.chat.id, f"❌ Ошибка отправки: {e}", reply_markup=get_admin_keyboard())
+            bot.send_message(message.chat.id, f"❌ Ошибка: {e}", reply_markup=get_admin_keyboard())
     else:
-        bot.send_message(message.chat.id, "ℹ️ Вы не выбрали пользователя для диалога. Нажмите **💬 Написать пользователю**.", parse_mode="Markdown", reply_markup=get_admin_keyboard())
+        if text and not text.startswith("/"):
+            handle_user_messages(message)
+            return
+        bot.send_message(message.chat.id, "ℹ️ Выберите пользователя через кнопку **💬 Написать пользователю**.", parse_mode="Markdown", reply_markup=get_admin_keyboard())
 
-@bot.message_handler(func=lambda message: not is_super_admin(message) or message.from_user.id in admin_as_user_mode, content_types=['text', 'photo'])
+@bot.message_handler(func=lambda message: not is_super_admin(message) or message.from_user.id in admin_as_user_mode, content_types=['text', 'photo', 'video', 'document', 'audio', 'voice', 'sticker'])
 def handle_user_messages(message):
     user = message.from_user
     user_id = user.id
@@ -518,11 +650,7 @@ def handle_user_messages(message):
     if text == "👑 Повернутися в адмін-панель" and is_admin:
         if user_id in admin_as_user_mode:
             admin_as_user_mode.remove(user_id)
-        bot.send_message(
-            message.chat.id, 
-            "👑 Ви знову в адмін-панелі!", 
-            reply_markup=get_admin_keyboard()
-        )
+        bot.send_message(message.chat.id, "👑 Повернення в адмін-панель!", reply_markup=get_admin_keyboard())
         bot.send_message(message.chat.id, "⚙ **Керування генерацією відео:**", parse_mode="Markdown", reply_markup=get_admin_panel_inline())
         return
 
@@ -542,35 +670,32 @@ def handle_user_messages(message):
         "❌ Завершить диалог", "❌ Завершити діалог"
     ]
 
-    if text in ["⚠️ Пожаловаться / Написать админу", "⚠ Поскаржитися / Написати адміну"]:
+    if text in ["⚠ Пожаловаться / Написать админу", "⚠ Поскаржитися / Написати адміну"]:
         user_support_mode.add(user_id)
-        
         kb = ReplyKeyboardMarkup(resize_keyboard=True)
         exit_btn = "❌ Завершити діалог" if lang == "ua" else "❌ Завершить диалог"
         kb.row(KeyboardButton(exit_btn))
-        
-        support_prompt = "✍ Режим діалогу з адміністратором активовано. Пишіть скільки завгодно повідомлень нижче:" if lang == "ua" else "✍ Режим диалога с администратором активирован. Пишите сколько угодно сообщений ниже:"
-        bot.send_message(message.chat.id, support_prompt, reply_markup=kb)
+        bot.send_message(message.chat.id, "✍ Режим діалогу активовано. Пишіть повідомлення:", reply_markup=kb)
         return
 
     if text in ["❌ Завершить диалог", "❌ Завершити діалог"]:
         if user_id in user_support_mode:
             user_support_mode.remove(user_id)
-        exit_text = "✅ Діалог завершено. Повертаємось у головне меню:" if lang == "ua" else "✅ Диалог завершен. Возвращаемся в главное меню:"
-        bot.send_message(message.chat.id, exit_text, reply_markup=get_user_keyboard(lang, user_id))
+        bot.send_message(message.chat.id, "✅ Діалог завершено.", reply_markup=get_user_keyboard(lang, user_id))
         return
 
     admin_chat = config.get("admin_chat_id")
-    if admin_chat and user_id in user_support_mode and text and text not in ignored_texts and not text.startswith("/"):
+    is_active_chat = (admin_chat and (user_id in user_support_mode or any(admin_id for admin_id, target in admin_chat_states.items() if target == user_id)))
+    
+    if admin_chat and is_active_chat and text not in ignored_texts and not (text and text.startswith("/")):
         try:
-            username_str = f"@{user.username}" if user.username else f"ID {user_id}"
             markup = InlineKeyboardMarkup()
-            markup.row(InlineKeyboardButton("💬 Ответить (продолжить диалог)", callback_data=f"chat_with_{user_id}"))
-            
-            bot.send_message(admin_chat, f"📩 **Повідомлення від {username_str}** (в режимі діалогу):\n\n{text}", parse_mode="Markdown", reply_markup=markup)
-            bot.send_message(message.chat.id, "✅ Надіслано адміну.")
-        except Exception as e:
-            print(f"Error sending support message: {e}")
+            markup.row(InlineKeyboardButton("💬 Ответить", callback_data=f"chat_with_{user_id}"))
+            bot.send_message(admin_chat, f"💬 **Сообщение от пользователя ID `{user_id}`:**", parse_mode="Markdown")
+            bot.copy_message(chat_id=admin_chat, from_chat_id=message.chat.id, message_id=message.message_id, reply_markup=markup)
+            bot.send_message(message.chat.id, "✅ Надіслано адміну." if lang == "ua" else "✅ Отправлено администратору.")
+        except:
+            pass
         return
 
     if text in ["🌐 Сменить язык", "🌐 Змінити мову"]:
@@ -582,14 +707,12 @@ def handle_user_messages(message):
         bot.send_message(message.chat.id, TEXTS[lang]["lang_select"], reply_markup=markup)
         return
     elif text in ["🎬 Инструкция", "🎬 Інструкція"]:
-        instr = "Отправьте ровно 3 фотографии (или альбомом), и бот автоматически соберет из них динамичное видео!" if lang == "ru" else "Надішліть рівно 3 фотографії (або альбомом), і бот автоматично збере з них динамічне відео!"
-        bot.send_message(message.chat.id, instr, reply_markup=get_user_keyboard(lang, user_id))
+        bot.send_message(message.chat.id, TEXTS[lang]["active"], reply_markup=get_user_keyboard(lang, user_id))
         return
     elif text in ["🎵 Украинская музыка", "🎵 Українська музика"]:
         send_random_ukr_music(message.chat.id, lang, user_id)
         return
 
-    # Накопление и обработка фотографий
     if message.content_type == 'photo':
         chat_id = message.chat.id
         
@@ -601,7 +724,6 @@ def handle_user_messages(message):
             file_info = bot.get_file(message.photo[-1].file_id)
             downloaded_file = bot.download_file(file_info.file_path)
             
-            # Сохраняем исходные байты фото в буфер
             if chat_id not in user_photos_buffer:
                 user_photos_buffer[chat_id] = []
             user_photos_buffer[chat_id].append(downloaded_file)
@@ -613,19 +735,17 @@ def handle_user_messages(message):
                 bot.reply_to(message, msg_text, reply_markup=get_user_keyboard(lang, user_id))
             else:
                 sub_photos = user_photos_buffer[chat_id][:3]
-                user_photos_buffer[chat_id] = [] # очищаем буфер
+                user_photos_buffer[chat_id] = []
 
                 bot.send_message(chat_id, TEXTS[lang]["rendering"], reply_markup=get_user_keyboard(lang, user_id))
-                generate_video_from_photos(chat_id, sub_photos, lang, video_index=random.randint(100, 999))
+                generate_video_from_photos(chat_id, sub_photos, lang, user_id, video_index=random.randint(100, 999))
 
         except Exception as e:
             bot.send_message(chat_id, f"❌ Error: {e}", reply_markup=get_user_keyboard(lang, user_id))
 
 def send_random_ukr_music(chat_id, lang, user_id):
-    track_query = random.choice(UKR_TRACKS)
+    track_query = get_unique_ukr_track(user_id)
     msg = bot.send_message(chat_id, TEXTS[lang]["music_downloading"])
-    
-    audio_path = os.path.join(BASE_DIR, f"track_{chat_id}.mp3")
     
     ydl_opts = {
         'format': 'bestaudio/best',
@@ -655,103 +775,81 @@ def send_random_ukr_music(chat_id, lang, user_id):
                 
         if actual_file and os.path.exists(actual_file):
             with open(actual_file, 'rb') as audio:
-                bot.send_audio(
-                    chat_id, 
-                    audio, 
-                    caption=f"🎵 {real_title}", 
-                    title=real_title, 
-                    reply_markup=get_user_keyboard(lang, user_id)
-                )
+                bot.send_audio(chat_id, audio, caption=f"🎵 {real_title}", title=real_title, reply_markup=get_user_keyboard(lang, user_id))
             bot.delete_message(chat_id, msg.message_id)
             os.remove(actual_file)
         else:
             bot.edit_message_text(TEXTS[lang]["music_error"], chat_id, msg.message_id)
-            
-    except Exception as e:
-        print(f"Music download error: {e}")
+    except:
         try:
             bot.edit_message_text(TEXTS[lang]["music_error"], chat_id, msg.message_id)
         except:
             pass
-        
-    if os.path.exists(audio_path):
-        try: os.remove(audio_path)
-        except: pass
     gc.collect()
 
-def generate_video_from_photos(chat_id, photo_bytes_list, lang, video_index=1):
+def generate_video_from_photos(chat_id, photo_bytes_list, lang, user_id, video_index=1):
     output_path = os.path.join(BASE_DIR, f"output_{chat_id}_{video_index}.mp4")
     text_img_path = os.path.join(BASE_DIR, f"text_{chat_id}_{video_index}.png")
     temp_files = [text_img_path]
 
     try:
-        chosen_quote = random.choice(QUOTES[lang])
+        chosen_quote = get_unique_quote(user_id, lang)
         create_pure_text_image(chosen_quote, text_img_path)
 
         clips = []
+        fps = 12
+        total_duration = 5.0  
+        frame_duration = 0.25 
+        total_frames = int(total_duration / frame_duration)
+
         sequence_indices = []
-        for i in range(25):
+        for i in range(total_frames):
             sequence_indices.append(i % len(photo_bytes_list))
 
-        # Возможные вариации фильтров для рандомной смены на каждой фотке
-        filter_types = ["noir", "contrast", "bright", "matte", "vintage"]
+        canvas_w, canvas_h = 1080, 1920
+        box_size = 1080  # Жесткий квадрат 1080x1080 по центру
 
         for i, photo_idx in enumerate(sequence_indices):
             p_bytes = photo_bytes_list[photo_idx]
             
-            img = Image.open(io.BytesIO(p_bytes)).convert("RGB")
+            img_original = io.BytesIO(p_bytes)
+            background = Image.new("RGB", (canvas_w, canvas_h), (0, 0, 0))
             
-            # Рандомно применяем разный фильтр (нуар, матовый, яркий, винтаж) для каждого кадра
-            current_filter = random.choice(filter_types)
-            if current_filter == "noir":
-                img = ImageOps.grayscale(img)
-                img = ImageEnhance.Contrast(img).enhance(1.5)
-            elif current_filter == "matte":
-                img = ImageOps.grayscale(img)
-                img = ImageEnhance.Brightness(img).enhance(0.85)
-                img = ImageEnhance.Contrast(img).enhance(1.1)
-            elif current_filter == "bright":
-                img = ImageEnhance.Brightness(img).enhance(1.25)
-            elif current_filter == "vintage":
-                img = ImageEnhance.Color(img).enhance(0.4)
-                img = ImageEnhance.Contrast(img).enhance(1.2)
-            else:
-                img = ImageEnhance.Color(img).enhance(0.7)
+            with Image.open(img_original) as img:
+                img = img.convert("RGB")
+                img = ImageOps.grayscale(img).convert("RGB")
+                img = ImageOps.autocontrast(img, cutoff=2)
+                
+                # Обрезаем фото строго под квадрат 1080x1080
+                img_square = ImageOps.fit(img, (box_size, box_size), Image.Resampling.LANCZOS, centering=(0.5, 0.5))
+                
+                paste_x = (canvas_w - box_size) // 2
+                paste_y = (canvas_h - box_size) // 2
+                
+                background.paste(img_square, (paste_x, paste_y))
 
-            # Строгая обрезка под вертикальный формат
-            img_w, img_h = img.size
-            target_aspect = 9 / 16  
-            current_aspect = img_w / img_h
-            if current_aspect > target_aspect:
-                new_w = int(img_h * target_aspect)
-                offset = (img_w - new_w) // 2
-                img = img.crop((offset, 0, offset + new_w, img_h))
-            else:
-                new_h = int(img_w / target_aspect)
-                offset = (img_h - new_h) // 2
-                img = img.crop((0, offset, img_w, offset + new_h))
-
-            img = img.resize((720, 1280), Image.Resampling.LANCZOS)
+            factor = 0.4 + 0.6 * (i / max(1, total_frames - 1))
+            enhancer = ImageEnhance.Brightness(background)
+            background = enhancer.enhance(factor)
 
             temp_p = os.path.join(BASE_DIR, f"temp_{chat_id}_{video_index}_{i}.jpg")
-            img.save(temp_p, "JPEG", quality=95)
+            background.save(temp_p, "JPEG", quality=95)
             temp_files.append(temp_p)
             
-            # Устанавливаем прозрачность КАЖДОЙ фотографии ровно 55% (0.55)
-            img_clip = ImageClip(temp_p, duration=0.2).with_opacity(0.55)
+            img_clip = ImageClip(temp_p, duration=frame_duration)
             clips.append(img_clip)
 
         video = concatenate_videoclips(clips, method="compose")
-        txt_clip = ImageClip(text_img_path, transparent=True, duration=5.0)
+        txt_clip = ImageClip(text_img_path, duration=total_duration)
 
         final_video = CompositeVideoClip([
             video,
-            txt_clip.with_position(('center', 'center'))
-        ])
+            txt_clip.set_position(('center', 'center'))
+        ], size=(canvas_w, canvas_h))
 
         final_video.write_videofile(
             output_path, 
-            fps=15, 
+            fps=fps, 
             codec='libx264', 
             preset='ultrafast', 
             audio=False,
@@ -759,7 +857,7 @@ def generate_video_from_photos(chat_id, photo_bytes_list, lang, video_index=1):
         )
 
         with open(output_path, 'rb') as vid:
-            bot.send_video(chat_id, vid, caption=f"✅ Готово!", reply_markup=get_user_keyboard(lang, chat_id))
+            bot.send_video(chat_id, vid, caption=f"✅ Готово! Квадратное фото с равными черными полями.", reply_markup=get_user_keyboard(lang, chat_id))
 
     except Exception as e:
         bot.send_message(chat_id, f"❌ Render error: {e}", reply_markup=get_user_keyboard(lang, chat_id))

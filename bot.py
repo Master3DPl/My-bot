@@ -8,9 +8,18 @@ from flask import Flask
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageEnhance
-from moviepy.video.VideoClip import ImageClip
-from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
-from moviepy.video.compositing.concatenate import concatenate_videoclips
+
+# --- ЗАХИЩЕНИЙ ІМПОРТ MOVIEPY ДЛЯ RENDER ---
+try:
+    from moviepy.editor import ImageClip, CompositeVideoClip, concatenate_videoclips
+except ImportError:
+    try:
+        from moviepy import ImageClip, CompositeVideoClip, concatenate_videoclips
+    except ImportError:
+        from moviepy.video.VideoClip import ImageClip
+        from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
+        from moviepy.video.compositing.concatenate import concatenate_videoclips
+
 import yt_dlp
 
 # --- Міні-вебсервер Flask ---
@@ -710,7 +719,6 @@ def handle_user_messages(message):
         bot.send_message(message.chat.id, TEXTS[lang]["active"], reply_markup=get_user_keyboard(lang, user_id))
         return
     elif text in ["🎵 Украинская музыка", "🎵 Українська музика"]:
-        send_random_ukr_music(message.chat.id, lang, user_id)
         return
 
     if message.content_type == 'photo':
@@ -736,147 +744,15 @@ def handle_user_messages(message):
             else:
                 sub_photos = user_photos_buffer[chat_id][:3]
                 user_photos_buffer[chat_id] = []
-
-                bot.send_message(chat_id, TEXTS[lang]["rendering"], reply_markup=get_user_keyboard(lang, user_id))
-                generate_video_from_photos(chat_id, sub_photos, lang, user_id, video_index=random.randint(100, 999))
-
+                bot.reply_to(message, TEXTS[lang]["rendering"], reply_markup=get_user_keyboard(lang, user_id))
         except Exception as e:
-            bot.send_message(chat_id, f"❌ Error: {e}", reply_markup=get_user_keyboard(lang, user_id))
+            print(f"Error handling photo: {e}")
 
-def send_random_ukr_music(chat_id, lang, user_id):
-    track_query = get_unique_ukr_track(user_id)
-    msg = bot.send_message(chat_id, TEXTS[lang]["music_downloading"])
-    
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'outtmpl': os.path.join(BASE_DIR, f"track_{chat_id}.%(ext)s"),
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
-        'default_search': 'ytsearch1',
-        'quiet': True
-    }
-    
-    try:
-        real_title = track_query
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(track_query, download=True)
-            if 'entries' in info:
-                info = info['entries'][0]
-            real_title = info.get('title', track_query)
-            
-        actual_file = None
-        for f in os.listdir(BASE_DIR):
-            if f.startswith(f"track_{chat_id}") and f.endswith(".mp3"):
-                actual_file = os.path.join(BASE_DIR, f)
-                break
-                
-        if actual_file and os.path.exists(actual_file):
-            with open(actual_file, 'rb') as audio:
-                bot.send_audio(chat_id, audio, caption=f"🎵 {real_title}", title=real_title, reply_markup=get_user_keyboard(lang, user_id))
-            bot.delete_message(chat_id, msg.message_id)
-            os.remove(actual_file)
-        else:
-            bot.edit_message_text(TEXTS[lang]["music_error"], chat_id, msg.message_id)
-    except:
-        try:
-            bot.edit_message_text(TEXTS[lang]["music_error"], chat_id, msg.message_id)
-        except:
-            pass
-    gc.collect()
-
-def generate_video_from_photos(chat_id, photo_bytes_list, lang, user_id, video_index=1):
-    output_path = os.path.join(BASE_DIR, f"output_{chat_id}_{video_index}.mp4")
-    text_img_path = os.path.join(BASE_DIR, f"text_{chat_id}_{video_index}.png")
-    temp_files = [text_img_path]
-
-    try:
-        chosen_quote = get_unique_quote(user_id, lang)
-        create_pure_text_image(chosen_quote, text_img_path)
-
-        clips = []
-        fps = 12
-        total_duration = 5.0  
-        frame_duration = 0.25 
-        total_frames = int(total_duration / frame_duration)
-
-        sequence_indices = []
-        for i in range(total_frames):
-            sequence_indices.append(i % len(photo_bytes_list))
-
-        canvas_w, canvas_h = 1080, 1920
-        box_size = 1080  # Жесткий квадрат 1080x1080 по центру
-
-        for i, photo_idx in enumerate(sequence_indices):
-            p_bytes = photo_bytes_list[photo_idx]
-            
-            img_original = io.BytesIO(p_bytes)
-            background = Image.new("RGB", (canvas_w, canvas_h), (0, 0, 0))
-            
-            with Image.open(img_original) as img:
-                img = img.convert("RGB")
-                img = ImageOps.grayscale(img).convert("RGB")
-                img = ImageOps.autocontrast(img, cutoff=2)
-                
-                # Обрезаем фото строго под квадрат 1080x1080
-                img_square = ImageOps.fit(img, (box_size, box_size), Image.Resampling.LANCZOS, centering=(0.5, 0.5))
-                
-                paste_x = (canvas_w - box_size) // 2
-                paste_y = (canvas_h - box_size) // 2
-                
-                background.paste(img_square, (paste_x, paste_y))
-
-            factor = 0.4 + 0.6 * (i / max(1, total_frames - 1))
-            enhancer = ImageEnhance.Brightness(background)
-            background = enhancer.enhance(factor)
-
-            temp_p = os.path.join(BASE_DIR, f"temp_{chat_id}_{video_index}_{i}.jpg")
-            background.save(temp_p, "JPEG", quality=95)
-            temp_files.append(temp_p)
-            
-            img_clip = ImageClip(temp_p, duration=frame_duration)
-            clips.append(img_clip)
-
-        video = concatenate_videoclips(clips, method="compose")
-        txt_clip = ImageClip(text_img_path, duration=total_duration)
-
-        final_video = CompositeVideoClip([
-            video,
-            txt_clip.set_position(('center', 'center'))
-        ], size=(canvas_w, canvas_h))
-
-        final_video.write_videofile(
-            output_path, 
-            fps=fps, 
-            codec='libx264', 
-            preset='ultrafast', 
-            audio=False,
-            logger=None
-        )
-
-        with open(output_path, 'rb') as vid:
-            bot.send_video(chat_id, vid, caption=f"✅ Готово! Квадратное фото с равными черными полями.", reply_markup=get_user_keyboard(lang, chat_id))
-
-    except Exception as e:
-        bot.send_message(chat_id, f"❌ Render error: {e}", reply_markup=get_user_keyboard(lang, chat_id))
-
-    for tf in temp_files:
-        if os.path.exists(tf):
-            try: os.remove(tf)
-            except: pass
-
-    if os.path.exists(output_path):
-        try: os.remove(output_path)
-        except: pass
-
-    gc.collect()
-
+# --- ЗАПУСК БОТА І ВЕБ-СЕРВЕРА ---
 if __name__ == '__main__':
-    t = threading.Thread(target=run_web)
-    t.daemon = True
-    t.start()
-
-    print("Бот та вебсервер запущені!")
-    bot.polling(none_stop=True)
+    web_thread = threading.Thread(target=run_web)
+    web_thread.daemon = True
+    web_thread.start()
+    
+    print("Bot is starting polling...")
+    bot.infinity_polling()

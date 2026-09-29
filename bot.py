@@ -20,8 +20,6 @@ except ImportError:
         from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
         from moviepy.video.compositing.concatenate import concatenate_videoclips
 
-import yt_dlp
-
 # --- Міні-вебсервер Flask ---
 app = Flask(__name__)
 
@@ -43,59 +41,6 @@ CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 
 SUPER_ADMIN = "drborys".lower()
 SUPER_ADMIN_ID = 000000000  
-
-# --- ГЕНЕРАЦІЯ 1000+ УКРАЇНСЬКИХ ТРЕКІВ ---
-def generate_large_ukr_tracks():
-    artists = [
-        "KOLA", "Артем Пивоваров", "YAKTAK", "SKOFKA", "Океан Ельзи", 
-        "SadSvit", "KAZKA", "Павло Зібров", "Tember Blanche", "Jerry Heil",
-        "alyona alyona", "Dorofeeva", "Макс Барских", "Bez Обмежень", "Скрябін",
-        "ТНМК", "Бумбокс", "Wellboy", "Schmalgauzen", "Parfeniuk", "CHEEV",
-        "Khatat", "Kavun Conspiracy", "O.Torvald", " Vivienne Mort", "Monatik"
-    ]
-    
-    titles_base = [
-        "Біля серця", "Маніфест", "Погляд", "Чути гімн", "Обійми", 
-        "Касета", "Плакала", "Хрещатик", "Вечорниці", "Молитва",
-        "Думи", "Вільні люди", "Спи собі сама", "Понад хмарами", "До ранку",
-        "Козацькому роду", "Не твоя війна", "Світло", "Там, де нас нема", "Зіронька",
-        "Пробач", "Люблю", "Назавжди", "Не зупиняй", "Пам'ять", "Брат за брата"
-    ]
-
-    generated_tracks = []
-    for artist in artists:
-        for title in titles_base:
-            generated_tracks.append(f"{artist} — {title}")
-
-    extra_modifiers = ["Remix", "Live", "Acoustic Version", "Speed Up", "Slowed", "Radio Edit", "Reimagined"]
-    base_pool = list(generated_tracks)
-    
-    counter = 1
-    while len(generated_tracks) < 1100:
-        base_track = random.choice(base_pool)
-        modifier = random.choice(extra_modifiers)
-        new_track_name = f"{base_track} ({modifier} {counter})"
-        if new_track_name not in generated_tracks:
-            generated_tracks.append(new_track_name)
-        counter += 1
-
-    return generated_tracks
-
-UKR_TRACKS = generate_large_ukr_tracks()
-user_track_history = {}
-
-def get_unique_ukr_track(user_id):
-    if user_id not in user_track_history:
-        user_track_history[user_id] = []
-    
-    used_list = user_track_history[user_id]
-    if len(used_list) >= len(UKR_TRACKS):
-        used_list.clear()
-
-    remaining = [t for t in UKR_TRACKS if t not in used_list]
-    chosen = random.choice(remaining)
-    used_list.append(chosen)
-    return chosen
 
 def load_allowed_users():
     if os.path.exists(USERS_FILE):
@@ -232,9 +177,8 @@ TEXTS = {
         "photo_saved": "📥 Фото принято ({}/3). Отправьте еще, чтобы запустить создание видео.",
         "lang_select": "🌐 Выберите язык / Оберіть мову:",
         "lang_changed": "✅ Язык успешно изменен на русский!",
-        "rendering": "⚡ Накопилось 3 фото! Применяю квадратный формат, цитату и затемнение...",
-        "music_downloading": "🔍 Ищу и скачиваю трек для вас...",
-        "music_error": "❌ Не удалось скачать трек, попробуйте еще раз."
+        "rendering": "⚡ Накопилось 3 фото! Собираю видео с текстом и затемнением...",
+        "error": "❌ Произошла ошибка при создании видео, попробуйте еще раз."
     },
     "ua": {
         "access_denied": "⛔ У вас немає доступу до цього бота.",
@@ -244,9 +188,8 @@ TEXTS = {
         "photo_saved": "📥 Фото прийнято ({}/3). Надішліть ще, щоб запустити створення відео.",
         "lang_select": "🌐 Оберіть мову / Выберите язык:",
         "lang_changed": "✅ Мову успішно змінено на українську!",
-        "rendering": "⚡ Зібралося 3 фото! Застосовую квадратний формат, цитату та затемнення...",
-        "music_downloading": "🔍 Шукаю та завантажую трек для вас...",
-        "music_error": "❌ Не вдалося завантажити трек, спробуйте ще раз."
+        "rendering": "⚡ Зібралося 3 фото! Збираю відео з текстом та затемненням...",
+        "error": "❌ Сталася помилка під час створення відео, спробуйте ще раз."
     }
 }
 
@@ -297,11 +240,9 @@ def get_user_keyboard(lang, user_id=None):
 
     if lang == "ru":
         kb.row(KeyboardButton("🌐 Сменить язык"), KeyboardButton("🎬 Инструкция"))
-        kb.row(KeyboardButton("🎵 Украинская музыка"))
         kb.row(KeyboardButton("⚠ Пожаловаться / Написать админу"))
     else:
         kb.row(KeyboardButton("🌐 Змінити мову"), KeyboardButton("🎬 Інструкція"))
-        kb.row(KeyboardButton("🎵 Українська музика"))
         kb.row(KeyboardButton("⚠️ Поскаржитися / Написати адміну"))
     return kb
 
@@ -672,7 +613,6 @@ def handle_user_messages(message):
         return
 
     ignored_texts = [
-        "🎵 Украинская музыка", "🎵 Українська музика",
         "🌐 Сменить язык", "🌐 Змінити мову",
         "🎬 Инструкция", "🎬 Інструкція",
         "⚠ Пожаловаться / Написать админу", "⚠️ Поскаржитися / Написати адміну",
@@ -718,8 +658,6 @@ def handle_user_messages(message):
     elif text in ["🎬 Инструкция", "🎬 Інструкція"]:
         bot.send_message(message.chat.id, TEXTS[lang]["active"], reply_markup=get_user_keyboard(lang, user_id))
         return
-    elif text in ["🎵 Украинская музыка", "🎵 Українська музика"]:
-        return
 
     if message.content_type == 'photo':
         chat_id = message.chat.id
@@ -747,7 +685,7 @@ def handle_user_messages(message):
                 bot.reply_to(message, TEXTS[lang]["rendering"], reply_markup=get_user_keyboard(lang, user_id))
                 
                 try:
-                    # 1. Создаем картинки с цитатами
+                    # 1. Создаем картинки с уникальными цитатами
                     quote_text = get_unique_quote(user_id, lang)
                     img_paths = []
                     for idx, p_data in enumerate(sub_photos):
@@ -760,65 +698,31 @@ def handle_user_messages(message):
                         base_img = Image.alpha_composite(base_img, dark)
                         base_img.save(p_path)
                         
-                        # Текст поверх
+                        # Текст поверх первой картинки
                         if idx == 0:
                             create_pure_text_image(quote_text, p_path)
                         img_paths.append(p_path)
 
-                    # 2. Выбираем украинский трек и ищем через yt-dlp
-                    bot.send_message(chat_id, TEXTS[lang]["music_downloading"])
-                    track_name = get_unique_ukr_track(user_id)
-                    
-                    audio_path = os.path.join(BASE_DIR, f"audio_{user_id}.mp3")
-                    ydl_opts = {
-                        'format': 'bestaudio/best',
-                        'outtmpl': audio_path.replace('.mp3', ''),
-                        'postprocessors': [{
-                            'key': 'FFmpegExtractAudio',
-                            'preferredcodec': 'mp3',
-                            'preferredquality': '192',
-                        }],
-                        'quiet': True,
-                        'noplaylist': True
-                    }
-                    
-                    try:
-                        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                            ydl.extract_info(f"ytsearch1:{track_name} audio", download=True)
-                        if not os.path.exists(audio_path):
-                            for f_name in os.listdir(BASE_DIR):
-                                if f_name.startswith(f"audio_{user_id}") and f_name.endswith('.mp3'):
-                                    audio_path = os.path.join(BASE_DIR, f_name)
-                                    break
-                    except Exception as ex:
-                        print(f"Music download error: {ex}")
-
-                    # 3. Собираем видео через MoviePy
+                    # 2. Собираем видео без музыки
                     clips = [ImageClip(p).set_duration(3.5) for p in img_paths]
                     video = concatenate_videoclips(clips, method="compose")
-                    
-                    if os.path.exists(audio_path):
-                        from moviepy.audio.io.AudioFileClip import AudioFileClip
-                        audio = AudioFileClip(audio_path).set_duration(video.duration)
-                        video = video.set_audio(audio)
 
                     output_video_path = os.path.join(BASE_DIR, f"result_{user_id}.mp4")
-                    video.write_videofile(output_video_path, fps=24, codec='libx264', audio_codec='aac', logger=None)
+                    video.write_videofile(output_video_path, fps=24, codec='libx264', audio=False, logger=None)
 
-                    # 4. Отправляем готовое видео пользователю
+                    # 3. Отправляем готовое видео пользователю
                     with open(output_video_path, 'rb') as vid_file:
-                        bot.send_video(chat_id, vid_file, caption=f"🎵 {track_name}", reply_markup=get_user_keyboard(lang, user_id))
+                        bot.send_video(chat_id, vid_file, reply_markup=get_user_keyboard(lang, user_id))
 
-                    # 5. Очистка временных файлов
+                    # 4. Очистка временных файлов
                     for p in img_paths:
                         if os.path.exists(p): os.remove(p)
                     if os.path.exists(output_video_path): os.remove(output_video_path)
-                    if os.path.exists(audio_path): os.remove(audio_path)
                     gc.collect()
 
                 except Exception as render_err:
                     print(f"Rendering error: {render_err}")
-                    bot.send_message(chat_id, TEXTS[lang]["music_error"], reply_markup=get_user_keyboard(lang, user_id))
+                    bot.send_message(chat_id, TEXTS[lang]["error"], reply_markup=get_user_keyboard(lang, user_id))
         except Exception as e:
             print(f"Error handling photo: {e}")
 

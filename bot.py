@@ -8,7 +8,7 @@ from flask import Flask
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from PIL import Image, ImageOps, ImageEnhance, ImageDraw, ImageFont
-from moviepy import ImageClip, concatenate_videoclips, CompositeVideoClip, vfx
+from moviepy.editor import ImageClip, concatenate_videoclips, CompositeVideoClip
 import yt_dlp
 
 # --- Міні-вебсервер Flask для обходу обмежень безкоштовного Web Service на Render ---
@@ -108,11 +108,11 @@ TEXTS = {
         "access_denied": "⛔ У вас нет доступа к этому боту.",
         "bot_globally_disabled": "🛠 Бот временно отключен администратором и находится на техническом обслуживании.",
         "video_disabled_for_users": "⛔ Создание видео временно отключено администратором.",
-        "active": "🎬 Бот активен! Отправьте **минимум 3 фотографии**, чтобы бот собрал из них видео в формате 4:3 с фильтром.",
+        "active": "🎬 Бот активен! Отправьте **минимум 3 фотографии**, чтобы бот собрал из них динамичное видео.",
         "photo_saved": "📥 Фото принято ({}/3). Отправьте еще, чтобы запустить создание видео.",
         "lang_select": "🌐 Выберите язык / Оберіть мову:",
         "lang_changed": "✅ Язык успешно изменен на русский!",
-        "rendering": "⚡ Накопилось 3 фото! Применяю фильтр, единый стиль и собираю видео...",
+        "rendering": "⚡ Накопилось 3 фото! Применяю разные фильтры, шрифты и прозрачность...",
         "music_downloading": "🔍 Ищу и скачиваю трек для вас...",
         "music_error": "❌ Не удалось скачать трек, попробуйте еще раз."
     },
@@ -120,11 +120,11 @@ TEXTS = {
         "access_denied": "⛔ У вас немає доступу до цього бота.",
         "bot_globally_disabled": "🛠 Бот тимчасово вимкнений адміністратором на технічне обслуговування.",
         "video_disabled_for_users": "⛔ Створення відео тимчасово вимкнено адміністратором.",
-        "active": "🎬 Бот активний! Надішліть **мінімум 3 фотографії**, щоб бот зібрав із них відео у форматі 4:3 із фільтром.",
+        "active": "🎬 Бот активний! Надішліть **мінімум 3 фотографії**, щоб бот зібрав із них динамічне відео.",
         "photo_saved": "📥 Фото прийнято ({}/3). Надішліть ще, щоб запустити створення відео.",
         "lang_select": "🌐 Оберіть мову / Выберите язык:",
         "lang_changed": "✅ Мову успішно змінено на українську!",
-        "rendering": "⚡ Збралося 3 фото! Застосовую фільтр, єдиний стиль та збираю відео...",
+        "rendering": "⚡ Збралося 3 фото! Застосовую різні фільтри, шрифти та прозорість...",
         "music_downloading": "🔍 Шукаю та завантажую трек для вас...",
         "music_error": "❌ Не вдалося завантажити трек, спробуйте ще раз."
     }
@@ -186,7 +186,7 @@ def get_user_keyboard(lang, user_id=None):
     return kb
 
 def create_pure_text_image(text, output_path):
-    img = Image.new('RGBA', (960, 720), (0, 0, 0, 0))
+    img = Image.new('RGBA', (720, 1280), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     
     font_path = os.path.join(BASE_DIR, "font.ttf")
@@ -194,7 +194,7 @@ def create_pure_text_image(text, output_path):
         font_path = "C:/Windows/Fonts/impact.ttf"
 
     try:
-        font = ImageFont.truetype(font_path, 34)
+        font = ImageFont.truetype(font_path, 36)
     except:
         font = ImageFont.load_default()
 
@@ -216,7 +216,7 @@ def create_pure_text_image(text, output_path):
             except:
                 w_test = len(test_line) * 16
                 
-            if w_test <= 820:
+            if w_test <= 620:
                 current_line = test_line
             else:
                 all_lines.append(current_line)
@@ -224,9 +224,9 @@ def create_pure_text_image(text, output_path):
         if current_line:
             all_lines.append(current_line)
 
-    line_height = 42
+    line_height = 46
     total_text_height = len(all_lines) * line_height
-    start_y = (720 - total_text_height) / 2
+    start_y = (1280 - total_text_height) / 2
 
     y = start_y
     for line in all_lines:
@@ -239,7 +239,7 @@ def create_pure_text_image(text, output_path):
         except:
             w = len(line) * 16
             
-        x = (960 - w) / 2
+        x = (720 - w) / 2
         
         shadow_offset = 3
         for dx, dy in [(-shadow_offset, -shadow_offset), (shadow_offset, -shadow_offset), 
@@ -582,7 +582,7 @@ def handle_user_messages(message):
         bot.send_message(message.chat.id, TEXTS[lang]["lang_select"], reply_markup=markup)
         return
     elif text in ["🎬 Инструкция", "🎬 Інструкція"]:
-        instr = "Отправьте ровно 3 фотографии (или альбомом), и бот автоматически соберет из них видео в формате 4:3 с фильтром!" if lang == "ru" else "Надішліть рівно 3 фотографії (або альбомом), і бот автоматично збере з них відео у форматі 4:3 із фільтром!"
+        instr = "Отправьте ровно 3 фотографии (или альбомом), и бот автоматически соберет из них динамичное видео!" if lang == "ru" else "Надішліть рівно 3 фотографії (або альбомом), і бот автоматично збере з них динамічне відео!"
         bot.send_message(message.chat.id, instr, reply_markup=get_user_keyboard(lang, user_id))
         return
     elif text in ["🎵 Украинская музыка", "🎵 Українська музика"]:
@@ -601,6 +601,7 @@ def handle_user_messages(message):
             file_info = bot.get_file(message.photo[-1].file_id)
             downloaded_file = bot.download_file(file_info.file_path)
             
+            # Сохраняем исходные байты фото в буфер
             if chat_id not in user_photos_buffer:
                 user_photos_buffer[chat_id] = []
             user_photos_buffer[chat_id].append(downloaded_file)
@@ -692,18 +693,34 @@ def generate_video_from_photos(chat_id, photo_bytes_list, lang, video_index=1):
         for i in range(25):
             sequence_indices.append(i % len(photo_bytes_list))
 
+        # Возможные вариации фильтров для рандомной смены на каждой фотке
+        filter_types = ["noir", "contrast", "bright", "matte", "vintage"]
+
         for i, photo_idx in enumerate(sequence_indices):
             p_bytes = photo_bytes_list[photo_idx]
             
             img = Image.open(io.BytesIO(p_bytes)).convert("RGB")
             
-            # Фільтр увімкнено завжди для кожного кадру (стиль Noir / кінематографічний чорно-білий контраст)
-            img = ImageOps.grayscale(img)
-            img = ImageEnhance.Contrast(img).enhance(1.5)
+            # Рандомно применяем разный фильтр (нуар, матовый, яркий, винтаж) для каждого кадра
+            current_filter = random.choice(filter_types)
+            if current_filter == "noir":
+                img = ImageOps.grayscale(img)
+                img = ImageEnhance.Contrast(img).enhance(1.5)
+            elif current_filter == "matte":
+                img = ImageOps.grayscale(img)
+                img = ImageEnhance.Brightness(img).enhance(0.85)
+                img = ImageEnhance.Contrast(img).enhance(1.1)
+            elif current_filter == "bright":
+                img = ImageEnhance.Brightness(img).enhance(1.25)
+            elif current_filter == "vintage":
+                img = ImageEnhance.Color(img).enhance(0.4)
+                img = ImageEnhance.Contrast(img).enhance(1.2)
+            else:
+                img = ImageEnhance.Color(img).enhance(0.7)
 
-            # Строгая обрезка под формат 4:3
+            # Строгая обрезка под вертикальный формат
             img_w, img_h = img.size
-            target_aspect = 4 / 3  
+            target_aspect = 9 / 16  
             current_aspect = img_w / img_h
             if current_aspect > target_aspect:
                 new_w = int(img_h * target_aspect)
@@ -714,18 +731,18 @@ def generate_video_from_photos(chat_id, photo_bytes_list, lang, video_index=1):
                 offset = (img_h - new_h) // 2
                 img = img.crop((0, offset, img_w, offset + new_h))
 
-            # Разрешение 960x720 (соотношение 4:3)
-            img = img.resize((960, 720), Image.Resampling.LANCZOS)
+            img = img.resize((720, 1280), Image.Resampling.LANCZOS)
 
             temp_p = os.path.join(BASE_DIR, f"temp_{chat_id}_{video_index}_{i}.jpg")
             img.save(temp_p, "JPEG", quality=95)
             temp_files.append(temp_p)
             
-            img_clip = ImageClip(temp_p, duration=0.2).with_effects([vfx.MultiplyColor(0.55)])
+            # Устанавливаем прозрачность КАЖДОЙ фотографии ровно 55% (0.55)
+            img_clip = ImageClip(temp_p, duration=0.2).with_opacity(0.55)
             clips.append(img_clip)
 
         video = concatenate_videoclips(clips, method="compose")
-        txt_clip = ImageClip(text_img_path, duration=5.0)
+        txt_clip = ImageClip(text_img_path, transparent=True, duration=5.0)
 
         final_video = CompositeVideoClip([
             video,
@@ -742,7 +759,7 @@ def generate_video_from_photos(chat_id, photo_bytes_list, lang, video_index=1):
         )
 
         with open(output_path, 'rb') as vid:
-            bot.send_video(chat_id, vid, caption=f"✅ Готово (формат 4:3 з фільтром)!", reply_markup=get_user_keyboard(lang, chat_id))
+            bot.send_video(chat_id, vid, caption=f"✅ Готово!", reply_markup=get_user_keyboard(lang, chat_id))
 
     except Exception as e:
         bot.send_message(chat_id, f"❌ Render error: {e}", reply_markup=get_user_keyboard(lang, chat_id))

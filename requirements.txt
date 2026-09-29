@@ -3,3 +3,5 @@ Pillow
 moviepy
 yt-dlp
 flask
+aiogram
+requests

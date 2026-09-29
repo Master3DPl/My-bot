@@ -2,3 +2,4 @@ pyTelegramBotAPI
 Pillow
 moviepy
 yt-dlp
+flask

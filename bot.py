@@ -110,11 +110,11 @@ TEXTS = {
         "access_denied": "⛔ У вас нет доступа к этому боту.",
         "bot_globally_disabled": "🛠 Бот временно отключен администратором и находится на техническом обслуживании.",
         "video_disabled_for_users": "⛔ Создание видео временно отключено администратором.",
-        "active": "🎬 Бот активен! Отправьте **минимум 3 фотографии**, чтобы бот быстро собрал из них вертикальное видео (9:16) для трафика.",
+        "active": "🎬 Бот активен! Отправьте **минимум 3 фотографии**, чтобы бот собрал из них видео для трафика.",
         "photo_saved": "📥 Фото принято ({}/3). Отправьте еще, чтобы запустить создание видео.",
         "lang_select": "🌐 Выберите язык / Оберіть мову:",
         "lang_changed": "✅ Язык успешно изменен на русский!",
-        "rendering": "⚡ Быстрая генерация видео запущена...",
+        "rendering": "⚡ Генерация видео (формат 3:4) запущенна...",
         "music_downloading": "🔍 Ищу и скачиваю трек для вас...",
         "music_error": "❌ Не удалось скачать трек, попробуйте еще раз."
     },
@@ -122,11 +122,11 @@ TEXTS = {
         "access_denied": "⛔ У вас немає доступу до цього бота.",
         "bot_globally_disabled": "🛠 Бот тимчасово вимкнений адміністратором на технічне обслуговування.",
         "video_disabled_for_users": "⛔ Створення відео тимчасово вимкнено адміністратором.",
-        "active": "🎬 Бот активний! Надішліть **мінімум 3 фотографії**, щоб бот швидко зібрав із них вертикальне відео (9:16) для трафіку.",
+        "active": "🎬 Бот активний! Надішліть **мінімум 3 фотографії**, щоб бот зібрав із них відео для трафіку.",
         "photo_saved": "📥 Фото прийнято ({}/3). Надішліть ще, щоб запустити створення відео.",
         "lang_select": "🌐 Оберіть мову / Выберите язык:",
         "lang_changed": "✅ Мову успішно змінено на українську!",
-        "rendering": "⚡ Швидку генерацію відео запущено...",
+        "rendering": "⚡ Генерацію відео (формат 3:4) запущено...",
         "music_downloading": "🔍 Шукаю та завантажую трек для вас...",
         "music_error": "❌ Не вдалося завантажити трек, спробуйте ще раз."
     }
@@ -583,7 +583,7 @@ def handle_user_messages(message):
         bot.send_message(message.chat.id, TEXTS[lang]["lang_select"], reply_markup=markup)
         return
     elif text in ["🎬 Инструкция", "🎬 Інструкція"]:
-        instr = "Отправьте 3 фотографии, и бот быстро соберет вертикальное видео (9:16)!" if lang == "ru" else "Надішліть 3 фотографії, і бот швидко збере вертикальне відео (9:16)!"
+        instr = "Отправьте фотографии, и бот соберет из них видео!" if lang == "ru" else "Надішліть фотографії, і бот збере з них відео!"
         bot.send_message(message.chat.id, instr, reply_markup=get_user_keyboard(lang, user_id))
         return
     elif text in ["🎵 Украинская музыка", "🎵 Українська музика"]:
@@ -660,7 +660,7 @@ def generate_video_from_photos(chat_id, photo_bytes_list, lang, video_index=1):
         create_pure_text_image(chosen_quote, text_img_path)
 
         clips = []
-        sequence_indices = [i % len(photo_bytes_list) for i in range(12)] # Быстрое создание из 12 кадров
+        sequence_indices = [i % len(photo_bytes_list) for i in range(12)]
 
         for i, photo_idx in enumerate(sequence_indices):
             p_bytes = photo_bytes_list[photo_idx]
@@ -668,8 +668,9 @@ def generate_video_from_photos(chat_id, photo_bytes_list, lang, video_index=1):
             img = ImageOps.grayscale(img)
             img = ImageEnhance.Contrast(img).enhance(1.5)
 
+            # Повернено обрізку під формат 3:4 (на основі старого коду)
             img_w, img_h = img.size
-            target_aspect = 9 / 16  
+            target_aspect = 3 / 4  
             current_aspect = img_w / img_h
             if current_aspect > target_aspect:
                 new_w = int(img_h * target_aspect)
@@ -680,7 +681,7 @@ def generate_video_from_photos(chat_id, photo_bytes_list, lang, video_index=1):
                 offset = (img_h - new_h) // 2
                 img = img.crop((0, offset, img_w, offset + new_h))
 
-            img = img.resize((480, 854), Image.Resampling.BILINEAR)
+            img = img.resize((720, 960), Image.Resampling.BILINEAR)
 
             temp_p = os.path.join(BASE_DIR, f"temp_{chat_id}_{video_index}_{i}.jpg")
             img.save(temp_p, "JPEG", quality=85)
@@ -707,7 +708,7 @@ def generate_video_from_photos(chat_id, photo_bytes_list, lang, video_index=1):
         )
 
         with open(output_path, 'rb') as vid:
-            bot.send_video(chat_id, vid, caption=f"✅ Готово (швидкий режим 9:16)!", reply_markup=get_user_keyboard(lang, chat_id))
+            bot.send_video(chat_id, vid, caption=f"✅ Готово (формат 3:4)!", reply_markup=get_user_keyboard(lang, chat_id))
 
     except Exception as e:
         bot.send_message(chat_id, f"❌ Render error: {e}", reply_markup=get_user_keyboard(lang, chat_id))

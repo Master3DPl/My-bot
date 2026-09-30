@@ -3,3 +3,4 @@ Pillow
 moviepy
 yt-dlp
 flask
+rapidfuzz

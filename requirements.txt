@@ -4,3 +4,4 @@ moviepy
 yt-dlp
 flask
 rapidfuzz
+psutil

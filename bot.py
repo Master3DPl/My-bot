@@ -18,6 +18,22 @@ from telebot.types import (
     ReplyKeyboardMarkup,
 )
 import yt_dlp
+import psutil
+
+# --- АВТОМАТИЧЕСКОЕ ЗАКРЫТИЕ СТАРЫХ КОПИЙ ---
+current_pid = os.getpid()
+current_script = os.path.basename(__file__)
+
+for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+  try:
+    if proc.info["pid"] != current_pid:
+      cmdline = proc.info["cmdline"]
+      if cmdline and any(current_script in arg for arg in cmdline):
+        print(f'Закрываю старый экземпляр бота (PID: {proc.info["pid"]})')
+        proc.kill()
+  except (psutil.NoSuchProcess, psutil.AccessDenied, Exception):
+    pass
+# ---------------------------------------------
 
 # --- ЗАХИЩЕНИЙ ІМПОРТ MOVIEPY ДЛЯ RENDER ---
 try:
@@ -207,7 +223,6 @@ def save_config(config_dict):
 allowed_users = load_allowed_users()
 config = load_config()
 
-# Проверка наличия всех ключей настроек кнопок
 if "bot_enabled" not in config:
   config["bot_enabled"] = True
 if "video_creation_enabled" not in config:
@@ -742,7 +757,9 @@ def callback_handler(call):
 
   if call.data == "btn_music_menu":
     if not config.get("btn_music_enabled", True):
-      bot.answer_callback_query(call.id, TEXTS[lang]["feature_disabled"], show_alert=True)
+      bot.answer_callback_query(
+          call.id, TEXTS[lang]["feature_disabled"], show_alert=True
+      )
       return
     user_music_states.add(user_id)
     bot.answer_callback_query(call.id)
@@ -974,7 +991,9 @@ def callback_handler(call):
 
   if call.data.startswith("setlang_"):
     if not config.get("btn_lang_enabled", True) and not is_admin:
-      bot.answer_callback_query(call.id, TEXTS[lang]["feature_disabled"], show_alert=True)
+      bot.answer_callback_query(
+          call.id, TEXTS[lang]["feature_disabled"], show_alert=True
+      )
       return
     new_lang = call.data.split("_")[1]
     set_user_lang(user_id, new_lang)
@@ -1315,7 +1334,54 @@ def handle_admin_messages(message):
 
   clear_previous_logs_message(message.chat.id, user_id)
 
-  # Обработка ввода ID или ника для истории смены данных
+  # --- ЛОГИ ПЕРЕНЕСЕНЫ САМЫМИ ПЕРВЫМИ ДЛЯ СТОП-ГАРАНТИИ РАБОТЫ ---
+  if text == "📜 Логи сообщений":
+    logs_data = []
+    if os.path.exists(LOGS_LIST_FILE):
+      try:
+        with open(LOGS_LIST_FILE, "r", encoding="utf-8") as lf:
+          logs_data = json.load(lf)
+      except:
+        pass
+
+    if logs_data:
+      log_text = "📜 **Все логи (от начала / последние записи):**\n\n"
+      for entry in logs_data:
+        log_text += (
+            f"🕒 `{entry['time']}`\n👤 {entry['user']}\n⚙"
+            f" {entry['action']}\n💬 {entry['details']}\n-------------------\n"
+        )
+    else:
+      log_text = "ℹ️ Логи пока пустые."
+
+    markup = InlineKeyboardMarkup()
+    markup.row(
+        InlineKeyboardButton(
+            "❌ Закрыть и удалить логи", callback_data="close_logs"
+        )
+    )
+
+    sent_msg_ids = []
+    if len(log_text) > 4000:
+      chunks = [log_text[i : i + 4000] for i in range(0, len(log_text), 4000)]
+      for idx, chunk in enumerate(chunks):
+        if idx == len(chunks) - 1:
+          m = bot.send_message(
+              message.chat.id, chunk, parse_mode="Markdown", reply_markup=markup
+          )
+        else:
+          m = bot.send_message(message.chat.id, chunk, parse_mode="Markdown")
+        sent_msg_ids.append(m.message_id)
+    else:
+      m = bot.send_message(
+          message.chat.id, log_text, parse_mode="Markdown", reply_markup=markup
+      )
+      sent_msg_ids.append(m.message_id)
+
+    admin_last_logs_msg[user_id] = sent_msg_ids
+    return
+  # -------------------------------------------------------------
+
   if user_id in admin_history_waiting:
     admin_history_waiting.remove(user_id)
     query = text.strip().lstrip("@").lower()
@@ -1478,52 +1544,6 @@ def handle_admin_messages(message):
     )
     return
 
-  elif text == "📜 Логи сообщений":
-    logs_data = []
-    if os.path.exists(LOGS_LIST_FILE):
-      try:
-        with open(LOGS_LIST_FILE, "r", encoding="utf-8") as lf:
-          logs_data = json.load(lf)
-      except:
-        pass
-
-    if logs_data:
-      log_text = "📜 **Все логи (от начала / последние записи):**\n\n"
-      for entry in logs_data:
-        log_text += (
-            f"🕒 `{entry['time']}`\n👤 {entry['user']}\n⚙️"
-            f" {entry['action']}\n💬 {entry['details']}\n-------------------\n"
-        )
-    else:
-      log_text = "ℹ️ Логи пока пустые."
-
-    markup = InlineKeyboardMarkup()
-    markup.row(
-        InlineKeyboardButton(
-            "❌ Закрыть и удалить логи", callback_data="close_logs"
-        )
-    )
-
-    sent_msg_ids = []
-    if len(log_text) > 4000:
-      chunks = [log_text[i : i + 4000] for i in range(0, len(log_text), 4000)]
-      for idx, chunk in enumerate(chunks):
-        if idx == len(chunks) - 1:
-          m = bot.send_message(
-              message.chat.id, chunk, parse_mode="Markdown", reply_markup=markup
-          )
-        else:
-          m = bot.send_message(message.chat.id, chunk, parse_mode="Markdown")
-        sent_msg_ids.append(m.message_id)
-    else:
-      m = bot.send_message(
-          message.chat.id, log_text, parse_mode="Markdown", reply_markup=markup
-      )
-      sent_msg_ids.append(m.message_id)
-
-    admin_last_logs_msg[user_id] = sent_msg_ids
-    return
-
   if user_id in admin_chat_states:
     target_chat_id = admin_chat_states[user_id]
     if text:
@@ -1611,7 +1631,7 @@ def handle_user_messages(message):
       "🎬 Інструкція",
       "🎵 Музика",
       "⚠ Пожаловаться / Написать админу",
-      "⚠️ Поскаржитися / Написати адміну",
+      "⚠ Поскаржитися / Написати адміну",
       "❌ Завершить диалог",
       "❌ Завершити діалог",
   ]

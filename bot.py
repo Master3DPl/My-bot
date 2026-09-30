@@ -1,6 +1,5 @@
 import concurrent.futures
 import gc
-import io
 import json
 import logging
 import os
@@ -8,8 +7,6 @@ import random
 import threading
 from datetime import datetime
 from flask import Flask
-from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageOps
-from rapidfuzz import process
 import telebot
 from telebot.types import (
     InlineKeyboardButton,
@@ -18,41 +15,6 @@ from telebot.types import (
     ReplyKeyboardMarkup,
 )
 import yt_dlp
-import psutil
-
-# --- АВТОМАТИЧЕСКОЕ ЗАКРЫТИЕ СТАРЫХ КОПИЙ ---
-current_pid = os.getpid()
-current_script = os.path.basename(__file__)
-
-for proc in psutil.process_iter(["pid", "name", "cmdline"]):
-  try:
-    if proc.info["pid"] != current_pid:
-      cmdline = proc.info["cmdline"]
-      if cmdline and any(current_script in arg for arg in cmdline):
-        print(f'Закрываю старый экземпляр бота (PID: {proc.info["pid"]})')
-        proc.kill()
-  except (psutil.NoSuchProcess, psutil.AccessDenied, Exception):
-    pass
-# ---------------------------------------------
-
-# --- ЗАХИЩЕНИЙ ІМПОРТ MOVIEPY ДЛЯ RENDER ---
-try:
-  from moviepy.editor import (
-      CompositeVideoClip,
-      ImageClip,
-      concatenate_videoclips,
-  )
-except ImportError:
-  try:
-    from moviepy import (
-        CompositeVideoClip,
-        ImageClip,
-        concatenate_videoclips,
-    )
-  except ImportError:
-    from moviepy.video.VideoClip import ImageClip
-    from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
-    from moviepy.video.compositing.concatenate import concatenate_videoclips
 
 log = logging.getLogger("werkzeug")
 log.setLevel(logging.ERROR)
@@ -70,7 +32,7 @@ def run_web():
   app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 
-TOKEN = "8658313360:AAGe5E7-ogE6nMqN8I3OlKuAZBqrthhckHg"
+TOKEN = "8750078142:AAFc7_kQNV4Vv532T2E0ocmKmj_qSBFbncQ"
 bot = telebot.TeleBot(TOKEN)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -82,14 +44,10 @@ USER_HISTORY_FILE = os.path.join(BASE_DIR, "user_history.json")
 SUPER_ADMIN = "drborys".lower()
 SUPER_ADMIN_ID = 1049082814
 
-user_music_states = set()
-
-# Хранилище ID сообщений с логами для каждого админа, чтобы авто-удалять их при клике на другие кнопки
 admin_last_logs_msg = {}
-
-# Состояния ожидания ввода для админов
 admin_input_waiting = set()
 admin_history_waiting = set()
+user_music_waiting = set()  # Режим очікування назви треку від користувача
 
 
 def write_log(action_type, user_info, text):
@@ -115,7 +73,6 @@ def write_log(action_type, user_info, text):
 
 
 def track_user_changes(user):
-  """Отслеживает изменения никнейма или имени пользователя и записывает в историю"""
   user_id_str = str(user.id)
   current_username = user.username.lower() if user.username else ""
   current_name = user.first_name if user.first_name else ""
@@ -159,7 +116,6 @@ def track_user_changes(user):
 
 
 def clear_previous_logs_message(chat_id, user_id):
-  """Удаляет предыдущее сообщение с логами, если оно было отправлено"""
   if user_id in admin_last_logs_msg:
     msg_ids = admin_last_logs_msg[user_id]
     if isinstance(msg_ids, list):
@@ -204,12 +160,10 @@ def load_config():
       pass
   return {
       "bot_enabled": True,
-      "video_creation_enabled": True,
       "user_approval_required": True,
-      "btn_music_enabled": True,
       "btn_lang_enabled": True,
-      "btn_instruction_enabled": True,
       "btn_support_enabled": True,
+      "btn_music_enabled": True,
       "admin_chat_ids": [SUPER_ADMIN_ID],
       "extra_admins": [],
   }
@@ -225,18 +179,14 @@ config = load_config()
 
 if "bot_enabled" not in config:
   config["bot_enabled"] = True
-if "video_creation_enabled" not in config:
-  config["video_creation_enabled"] = True
 if "user_approval_required" not in config:
   config["user_approval_required"] = True
-if "btn_music_enabled" not in config:
-  config["btn_music_enabled"] = True
 if "btn_lang_enabled" not in config:
   config["btn_lang_enabled"] = True
-if "btn_instruction_enabled" not in config:
-  config["btn_instruction_enabled"] = True
 if "btn_support_enabled" not in config:
   config["btn_support_enabled"] = True
+if "btn_music_enabled" not in config:
+  config["btn_music_enabled"] = True
 if "admin_chat_ids" not in config:
   config["admin_chat_ids"] = [SUPER_ADMIN_ID]
 if "extra_admins" not in config:
@@ -245,77 +195,7 @@ save_config(config)
 
 admin_chat_states = {}
 admin_as_user_mode = set()
-user_photos_buffer = {}
 user_support_mode = set()
-
-
-def generate_large_quotes():
-  ru_bases = [
-      (
-          "ты годами собираешь чужие инструкции и сохраняешь полезные гайды,"
-          " но так и не делаешь первый шаг..\n\nначнешь применять знания на"
-          " практике или снова пролистаешь.."
-      ),
-      (
-          "ты выбираешь сидеть в тепле и комфорте, подсознательно пряча любые"
-          " свои амбиции и цели..\n\nвыйдешь из зоны комфорта или снова"
-          " пролистаешь.."
-      ),
-      (
-          "время идет, а ты продолжаешь ждать идеального момента..\n\nа он"
-          " никогда не наступит, пока ты не начнешь."
-      ),
-      (
-          "дорога не прощает ошибок, она учит держать удар и идти до конца..\n\nтвоя"
-          " цель стоит того, чтобы рискнуть?"
-      ),
-      (
-          "никто не придет и не сделает твою жизнь лучше за тебя..\n\nхватит"
-          " откладывать себя на потом."
-      ),
-  ]
-  ua_bases = [
-      (
-          "ти роками збираєш чужі інструкції та зберігаєш корисні гайди, але так"
-          " і не робиш перший крок..\n\nпочнешь застосовувати знання на практиці"
-          " чи знову прогорнеш.."
-      ),
-      (
-          "ти обираєш сидіти в теплі і комфорті, підсвідомо ховаючи будь-які свої"
-          " амбіції та цілі..\n\nвийдеш із зони комфорту чи знову прогорнеш.."
-      ),
-      (
-          "час іде, а ты продовжуєш чекати на ідеальний момент..\n\nа він ніколи"
-          " не настане, поки ты не почнеш."
-      ),
-      (
-          "дорога не прощає помилок, вона вчить тримати удар і йти до кінця..\n\nтвоя"
-          " мета варта того, щоб ризикнути?"
-      ),
-      (
-          "ніхто не прийде і не зробить твоє життя кращим за тебе..\n\nдосить"
-          " відкладати себе на потом."
-      ),
-  ]
-  return {"ru": ru_bases, "ua": ua_bases}
-
-
-QUOTES = generate_large_quotes()
-user_quote_history = {}
-
-
-def get_unique_quote(user_id, lang):
-  if user_id not in user_quote_history:
-    user_quote_history[user_id] = {"ru": [], "ua": []}
-  available_pool = QUOTES[lang]
-  used_list = user_quote_history[user_id][lang]
-  if len(used_list) >= len(available_pool):
-    used_list.clear()
-  remaining = [q for q in available_pool if q not in used_list]
-  chosen = random.choice(remaining)
-  used_list.append(chosen)
-  return chosen
-
 
 TEXTS = {
     "ru": {
@@ -324,51 +204,20 @@ TEXTS = {
             "🛠 Бот временно отключен администратором и находится на"
             " техническом обслуживании."
         ),
-        "video_disabled_for_users": (
-            "⛔ Создание видео временно отключено администратором."
-        ),
         "feature_disabled": "⛔ Эта функция временно отключена администратором.",
-        "active": (
-            "🎬 Бот активен! Отправьте **минимум 3 фотографии**, чтобы бот"
-            " собрал из них динамичное видео."
-        ),
-        "photo_saved": (
-            "📥 Фото принято ({}/3). Отправьте еще, чтобы запустить создание"
-            " видео."
-        ),
+        "active": "🤖 Бот успешно запущен и готов к работе!",
         "lang_select": "🌐 Выберите язык / Оберіть мову:",
         "lang_changed": "✅ Язык успешно изменен на русский!",
-        "rendering": (
-            "⚡ Накопилось 3 фото! Создаю быстрые переходы и накладываю"
-            " текст..."
-        ),
-        "error": "❌ Произошла ошибка при создании видео, попробуйте еще раз.",
     },
     "ua": {
         "access_denied": "⛔ У вас немає доступу до цього бота.",
         "bot_globally_disabled": (
             "🛠 Бот тимчасово вимкнений адміністратором на технічне обслуговування."
         ),
-        "video_disabled_for_users": (
-            "⛔ Створення відео тимчасово вимкнено адміністратором."
-        ),
         "feature_disabled": "⛔ Цю функцію тимчасово вимкнено адміністратором.",
-        "active": (
-            "🎬 Бот активний! Надішліть **мінімум 3 фотографії**, щоб бот зібрав"
-            " із них динамічне відео."
-        ),
-        "photo_saved": (
-            "📥 Фото прийнято ({}/3). Надішліть ще, щоб запустити створення"
-            " відео."
-        ),
+        "active": "🤖 Бот успішно запущено та готовий до роботи!",
         "lang_select": "🌐 Оберіть мову / Выберите язык:",
         "lang_changed": "✅ Мову успішно змінено на українську!",
-        "rendering": (
-            "⚡ Зібралося 3 фото! Створюю швидкі переходи та накладаю текст..."
-        ),
-        "error": (
-            "❌ Сталася помилка під час створення відео, спробуйте ще раз."
-        ),
     },
 }
 
@@ -425,7 +274,7 @@ def get_admin_keyboard(user_id=None):
       else "🔴 Бот ВЫКЛЮЧЕН (Нажмите для вкл)"
   )
   kb.row(KeyboardButton(status_btn_text))
-  kb.row(KeyboardButton("⚙️ Управление кнопками и функциями"))
+  kb.row(KeyboardButton("⚙ Управление кнопками и функциями"))
   kb.row(KeyboardButton("👥 Управление пользователями"))
   kb.row(KeyboardButton("📜 Логи сообщений"))
   if user_id and user_id in admin_as_user_mode:
@@ -437,54 +286,36 @@ def get_admin_keyboard(user_id=None):
 
 def get_admin_panel_inline():
   kb = InlineKeyboardMarkup(row_width=1)
-  is_video_on = config.get("video_creation_enabled", True)
   is_approval_on = config.get("user_approval_required", True)
-  is_music_on = config.get("btn_music_enabled", True)
   is_lang_on = config.get("btn_lang_enabled", True)
-  is_instruction_on = config.get("btn_instruction_enabled", True)
   is_support_on = config.get("btn_support_enabled", True)
+  is_music_on = config.get("btn_music_enabled", True)
 
-  video_text = (
-      "🟢 Генерація відео: УВІМКНЕНА"
-      if is_video_on
-      else "🔴 Генерація відео: ВИМКНЕНА"
-  )
   approval_text = (
       "🟢 Запит доступу юзерів: УВІМКНЕН"
       if is_approval_on
       else "🔴 Запит доступу юзерів: ВИМКНЕН"
   )
-  music_text = "🟢 Кнопка 'Музика': ВКЛ" if is_music_on else "🔴 Кнопка 'Музика': ВЫКЛ"
   lang_text = (
       "🟢 Кнопка 'Зміна мови': ВКЛ" if is_lang_on else "🔴 Кнопка 'Зміна мови': ВЫКЛ"
-  )
-  instruction_text = (
-      "🟢 Кнопка 'Інструкція': ВКЛ"
-      if is_instruction_on
-      else "🔴 Кнопка 'Інструкція': ВЫКЛ"
   )
   support_text = (
       "🟢 Кнопка 'Скарга/Адмін': ВКЛ"
       if is_support_on
       else "🔴 Кнопка 'Скарга/Адмін': ВЫКЛ"
   )
-
-  kb.add(
-      InlineKeyboardButton(video_text, callback_data="toggle_video_generation")
+  music_text = (
+      "🟢 Кнопка 'Музика': ВКЛ" if is_music_on else "🔴 Кнопка 'Музика': ВЫКЛ"
   )
+
   kb.add(
       InlineKeyboardButton(
           approval_text, callback_data="toggle_approval_requirement"
       )
   )
-  kb.add(InlineKeyboardButton(music_text, callback_data="toggle_btn_music"))
   kb.add(InlineKeyboardButton(lang_text, callback_data="toggle_btn_lang"))
-  kb.add(
-      InlineKeyboardButton(
-          instruction_text, callback_data="toggle_btn_instruction"
-      )
-  )
   kb.add(InlineKeyboardButton(support_text, callback_data="toggle_btn_support"))
+  kb.add(InlineKeyboardButton(music_text, callback_data="toggle_btn_music"))
   kb.add(
       InlineKeyboardButton(
           "🔙 Назад в головне меню", callback_data="admin_back_main"
@@ -515,16 +346,16 @@ def get_user_keyboard(lang, user_id=None):
             "🌐 Сменить язык" if lang == "ru" else "🌐 Змінити мову"
         )
     )
-  if config.get("btn_instruction_enabled", True):
+  if config.get("btn_music_enabled", True):
     row1.append(
-        KeyboardButton("🎬 Инструкция" if lang == "ru" else "🎬 Інструкція")
+        KeyboardButton(
+            "🎵 Найти музыку" if lang == "ru" else "🎵 Знайти музику"
+        )
     )
   if row1:
     kb.row(*row1)
 
   row2 = []
-  if config.get("btn_music_enabled", True):
-    row2.append(KeyboardButton("🎵 Музика"))
   if config.get("btn_support_enabled", True):
     row2.append(
         KeyboardButton(
@@ -539,114 +370,14 @@ def get_user_keyboard(lang, user_id=None):
   return kb
 
 
-def prepare_photo_with_letterbox(photo_bytes, text):
-  base_img = Image.open(io.BytesIO(photo_bytes)).convert("RGBA")
-  target_w, target_h = 1080, 1920
-  img_w, img_h = base_img.size
-  new_w = target_w
-  new_h = int(img_h * (target_w / img_w))
-  if new_h > target_h:
-    new_h = target_h
-    new_w = int(img_w * (target_h / img_h))
-  base_img = base_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-  canvas = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 255))
-  paste_x = (target_w - new_w) // 2
-  paste_y = (target_h - new_h) // 2
-  canvas.paste(base_img, (paste_x, paste_y), base_img)
-  draw = ImageDraw.Draw(canvas)
-  font_path = os.path.join(BASE_DIR, "font.ttf")
-  if not os.path.exists(font_path):
-    font_path = "C:/Windows/Fonts/impact.ttf"
-  try:
-    font = ImageFont.truetype(font_path, 52)
-  except:
-    font = ImageFont.load_default()
-
-  text_color = (255, 255, 255, 255)
-  shadow_color = (0, 0, 0, 255)
-  parts = text.split("\n\n")
-  main_part = parts[0] if len(parts) > 0 else text
-  sub_part = parts[1] if len(parts) > 1 else ""
-
-  def wrap_text(text_block):
-    paragraphs = text_block.split("\n")
-    lines = []
-    for para in paragraphs:
-      if not para.strip():
-        lines.append("")
-        continue
-      words = para.split()
-      current_line = ""
-      for word in words:
-        test_line = current_line + " " + word if current_line else word
-        try:
-          w_test = font.getlength(test_line)
-        except:
-          w_test = len(test_line) * 22
-        if w_test <= 900:
-          current_line = test_line
-        else:
-          lines.append(current_line)
-          current_line = word
-      if current_line:
-        lines.append(current_line)
-    return lines
-
-  main_lines = wrap_text(main_part)
-  sub_lines = wrap_text(sub_part) if sub_part else []
-  line_height = 70
-  total_main_height = len(main_lines) * line_height
-  start_y_main = (target_h - total_main_height) / 2 - 100
-  y = start_y_main
-  for line in main_lines:
-    if line == "":
-      y += line_height / 2
-      continue
-    try:
-      w = font.getlength(line)
-    except:
-      w = len(line) * 22
-    x = (target_w - w) / 2
-    shadow_offset = 3
-    for dx, dy in [
-        (-shadow_offset, -shadow_offset),
-        (shadow_offset, -shadow_offset),
-        (-shadow_offset, shadow_offset),
-        (shadow_offset, shadow_offset),
-        (-shadow_offset, 0),
-        (shadow_offset, 0),
-        (0, -shadow_offset),
-        (0, shadow_offset),
-    ]:
-      draw.text((x + dx, y + dy), line, font=font, fill=shadow_color)
-    draw.text((x, y), line, font=font, fill=text_color)
-    y += line_height
-  if sub_lines:
-    y += 60
-    for line in sub_lines:
-      if line == "":
-        y += line_height / 2
-        continue
-      try:
-        w = font.getlength(line)
-      except:
-        w = len(line) * 22
-      x = (target_w - w) / 2
-      shadow_offset = 3
-      for dx, dy in [
-          (-shadow_offset, -shadow_offset),
-          (shadow_offset, -shadow_offset),
-          (-shadow_offset, shadow_offset),
-          (shadow_offset, shadow_offset),
-          (-shadow_offset, 0),
-          (shadow_offset, 0),
-          (0, -shadow_offset),
-          (0, shadow_offset),
-      ]:
-        draw.text((x + dx, y + dy), line, font=font, fill=shadow_color)
-      draw.text((x, y), line, font=font, fill=text_color)
-      y += line_height
-  return canvas
+@bot.message_handler(commands=["restart", "update"])
+def restart_bot(message):
+  if not is_super_admin(message):
+    return
+  bot.send_message(
+      message.chat.id, "🔄 Бот перезавантажується для оновлення..."
+  )
+  os._exit(42)
 
 
 @bot.message_handler(commands=["start"])
@@ -722,28 +453,14 @@ def start(message):
 
   if user_id in user_support_mode:
     user_support_mode.remove(user_id)
-  if user_id in user_music_states:
-    user_music_states.remove(user_id)
+  if user_id in user_music_waiting:
+    user_music_waiting.remove(user_id)
 
-  keyboard_music = InlineKeyboardMarkup()
-  if config.get("btn_music_enabled", True):
-    keyboard_music.row(
-        InlineKeyboardButton("🎵 Музика", callback_data="btn_music_menu")
-    )
   bot.send_message(
       user_id,
       TEXTS[lang]["active"],
       reply_markup=get_user_keyboard(lang, user_id),
   )
-  if config.get("btn_music_enabled", True):
-    bot.send_message(
-        user_id,
-        (
-            "Також ви можете скористатися пошуком та завантаженням музики через"
-            " кнопку нижче:"
-        ),
-        reply_markup=keyboard_music,
-    )
 
 
 @bot.callback_query_handler(func=lambda call: True)
@@ -754,20 +471,6 @@ def callback_handler(call):
 
   if call.data != "close_logs":
     clear_previous_logs_message(call.message.chat.id, user_id)
-
-  if call.data == "btn_music_menu":
-    if not config.get("btn_music_enabled", True):
-      bot.answer_callback_query(
-          call.id, TEXTS[lang]["feature_disabled"], show_alert=True
-      )
-      return
-    user_music_states.add(user_id)
-    bot.answer_callback_query(call.id)
-    bot.send_message(
-        call.message.chat.id,
-        "Введи назву треку або виконавця (можна з помилками, я знайду):",
-    )
-    return
 
   if call.data == "close_logs":
     if not is_super_admin(call):
@@ -843,30 +546,6 @@ def callback_handler(call):
       pass
     return
 
-  if call.data == "toggle_video_generation":
-    if not is_super_admin(call):
-      bot.answer_callback_query(call.id, "⛔ У вас нет прав!", show_alert=True)
-      return
-    current_status = config.get("video_creation_enabled", True)
-    config["video_creation_enabled"] = not current_status
-    save_config(config)
-    updated_kb = get_admin_panel_inline()
-    alert_text = (
-        "✅ Генерація відео ввімкнена!"
-        if config["video_creation_enabled"]
-        else "❌ Генерація відео вимкнена!"
-    )
-    try:
-      bot.answer_callback_query(call.id, alert_text)
-      bot.edit_message_reply_markup(
-          chat_id=call.message.chat.id,
-          message_id=call.message.message_id,
-          reply_markup=updated_kb,
-      )
-    except:
-      pass
-    return
-
   if call.data == "toggle_approval_requirement":
     if not is_super_admin(call):
       bot.answer_callback_query(call.id, "⛔ У вас нет прав!", show_alert=True)
@@ -886,30 +565,6 @@ def callback_handler(call):
           chat_id=call.message.chat.id,
           message_id=call.message.message_id,
           reply_markup=updated_kb,
-      )
-    except:
-      pass
-    return
-
-  if call.data == "toggle_btn_music":
-    if not is_super_admin(call):
-      bot.answer_callback_query(call.id, "⛔ У вас нет прав!", show_alert=True)
-      return
-    config["btn_music_enabled"] = not config.get("btn_music_enabled", True)
-    save_config(config)
-    try:
-      bot.answer_callback_query(
-          call.id,
-          (
-              "✅ Кнопка Музыка включена"
-              if config["btn_music_enabled"]
-              else "❌ Кнопка Музыка выключена"
-          ),
-      )
-      bot.edit_message_reply_markup(
-          chat_id=call.message.chat.id,
-          message_id=call.message.message_id,
-          reply_markup=get_admin_panel_inline(),
       )
     except:
       pass
@@ -939,32 +594,6 @@ def callback_handler(call):
       pass
     return
 
-  if call.data == "toggle_btn_instruction":
-    if not is_super_admin(call):
-      bot.answer_callback_query(call.id, "⛔ У вас нет прав!", show_alert=True)
-      return
-    config["btn_instruction_enabled"] = not config.get(
-        "btn_instruction_enabled", True
-    )
-    save_config(config)
-    try:
-      bot.answer_callback_query(
-          call.id,
-          (
-              "✅ Кнопка Инструкция включена"
-              if config["btn_instruction_enabled"]
-              else "❌ Кнопка Инструкция выключена"
-          ),
-      )
-      bot.edit_message_reply_markup(
-          chat_id=call.message.chat.id,
-          message_id=call.message.message_id,
-          reply_markup=get_admin_panel_inline(),
-      )
-    except:
-      pass
-    return
-
   if call.data == "toggle_btn_support":
     if not is_super_admin(call):
       bot.answer_callback_query(call.id, "⛔ У вас нет прав!", show_alert=True)
@@ -978,6 +607,30 @@ def callback_handler(call):
               "✅ Кнопка Жалобы включена"
               if config["btn_support_enabled"]
               else "❌ Кнопка Жалобы выключена"
+          ),
+      )
+      bot.edit_message_reply_markup(
+          chat_id=call.message.chat.id,
+          message_id=call.message.message_id,
+          reply_markup=get_admin_panel_inline(),
+      )
+    except:
+      pass
+    return
+
+  if call.data == "toggle_btn_music":
+    if not is_super_admin(call):
+      bot.answer_callback_query(call.id, "⛔ У вас нет прав!", show_alert=True)
+      return
+    config["btn_music_enabled"] = not config.get("btn_music_enabled", True)
+    save_config(config)
+    try:
+      bot.answer_callback_query(
+          call.id,
+          (
+              "✅ Кнопка Музыка включена"
+              if config["btn_music_enabled"]
+              else "❌ Кнопка Музыка выключена"
           ),
       )
       bot.edit_message_reply_markup(
@@ -1076,7 +729,7 @@ def callback_handler(call):
     bot.answer_callback_query(call.id)
     bot.send_message(
         call.message.chat.id,
-        "✍️ **Введите юзернейм (ник) нового администратора** (без @):",
+        "✍ **Введите юзернейм (ник) нового администратора** (без @):",
         parse_mode="Markdown",
     )
     return
@@ -1318,15 +971,7 @@ def callback_handler(call):
     func=lambda message: (
         is_super_admin(message) and message.from_user.id not in admin_as_user_mode
     ),
-    content_types=[
-        "text",
-        "photo",
-        "video",
-        "document",
-        "audio",
-        "voice",
-        "sticker",
-    ],
+    content_types=["text"],
 )
 def handle_admin_messages(message):
   user_id = message.from_user.id
@@ -1334,7 +979,6 @@ def handle_admin_messages(message):
 
   clear_previous_logs_message(message.chat.id, user_id)
 
-  # --- ЛОГИ ПЕРЕНЕСЕНЫ САМЫМИ ПЕРВЫМИ ДЛЯ СТОП-ГАРАНТИИ РАБОТЫ ---
   if text == "📜 Логи сообщений":
     logs_data = []
     if os.path.exists(LOGS_LIST_FILE):
@@ -1380,7 +1024,6 @@ def handle_admin_messages(message):
 
     admin_last_logs_msg[user_id] = sent_msg_ids
     return
-  # -------------------------------------------------------------
 
   if user_id in admin_history_waiting:
     admin_history_waiting.remove(user_id)
@@ -1458,15 +1101,13 @@ def handle_admin_messages(message):
     )
     return
 
-  if message.content_type == "photo" and user_id not in admin_chat_states:
-    handle_user_messages(message)
-    return
-
   if text in [
       "⚠ Пожаловаться / Написать админу",
-      "⚠️ Поскаржитися / Написати адміну",
+      "⚠ Поскаржитися / Написати адміну",
       "❌ Завершить диалог",
       "❌ Завершити діалог",
+      "🎵 Найти музыку",
+      "🎵 Знайти музику",
   ]:
     handle_user_messages(message)
     return
@@ -1579,15 +1220,7 @@ def handle_admin_messages(message):
     func=lambda message: (
         not is_super_admin(message) or message.from_user.id in admin_as_user_mode
     ),
-    content_types=[
-        "text",
-        "photo",
-        "video",
-        "document",
-        "audio",
-        "voice",
-        "sticker",
-    ],
+    content_types=["text"],
 )
 def handle_user_messages(message):
   user = message.from_user
@@ -1627,127 +1260,40 @@ def handle_user_messages(message):
   ignored_texts = [
       "🌐 Сменить язык",
       "🌐 Змінити мову",
-      "🎬 Инструкция",
-      "🎬 Інструкція",
-      "🎵 Музика",
       "⚠ Пожаловаться / Написать админу",
       "⚠ Поскаржитися / Написати адміну",
+      "🎵 Найти музыку",
+      "🎵 Знайти музику",
       "❌ Завершить диалог",
       "❌ Завершити діалог",
   ]
 
-  if text == "🎵 Музика":
+  if text in ["🎵 Найти музыку", "🎵 Знайти музику"]:
     if not config.get("btn_music_enabled", True) and not is_admin:
       bot.send_message(message.chat.id, TEXTS[lang]["feature_disabled"])
       return
-    user_music_states.add(user_id)
+    user_music_waiting.add(user_id)
+    kb = ReplyKeyboardMarkup(resize_keyboard=True)
+    exit_btn = (
+        "❌ Завершити діалог" if lang == "ua" else "❌ Завершить диалог"
+    )
+    kb.row(KeyboardButton(exit_btn))
     bot.send_message(
         message.chat.id,
-        "Введи назву треку або виконавця (можна з помилками, я знайду):",
+        (
+            "🎵 Введіть назву треку або виконавця, і я знайду та надішлю"
+            " музику:"
+            if lang == "ua"
+            else "🎵 Введите название трека или исполнителя, и я найду и отправлю"
+            " музыку:"
+        ),
+        reply_markup=kb,
     )
-    return
-
-  if (
-      user_id in user_music_states
-      and text not in ignored_texts
-      and not text.startswith("/")
-  ):
-    if not config.get("btn_music_enabled", True) and not is_admin:
-      user_music_states.remove(user_id)
-      bot.send_message(message.chat.id, TEXTS[lang]["feature_disabled"])
-      return
-    user_music_states.remove(user_id)
-    user_query = text.strip()
-
-    popular_tracks = [
-        "Måneskin - ZITTI E BUONI",
-        "Imagine Dragons - Believer",
-        "The Weeknd - Blinding Lights",
-        "Phonk - Drift Samping",
-        "Billie Eilish - bad guy",
-        "Eminem - Rap God",
-        "DVRST - Close Eyes",
-        "Kavinsky - Nightcall",
-    ]
-
-    match_result = process.extractOne(user_query, popular_tracks)
-    if match_result and match_result[1] > 40:
-      search_query = match_result[0]
-      bot.send_message(
-          message.chat.id,
-          f"🔍 Виправлено запит (знайдено схоже): <b>{search_query}</b>",
-          parse_mode="HTML",
-      )
-    else:
-      search_query = user_query
-
-    processing_msg = bot.send_message(
-        message.chat.id, "⏳ Шукаю і завантажую аудіо, зачекай кілька секунд..."
-    )
-
-    file_base_name = f"audio_{user_id}"
-    mp3_file_name = f"{file_base_name}.mp3"
-
-    ydl_opts = {
-        "format": "bestaudio/best",
-        "postprocessors": [
-            {
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "192",
-            }
-        ],
-        "outtmpl": file_base_name,
-        "default_search": "ytsearch1:",
-        "quiet": True,
-    }
-
-    def download_audio():
-      with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([search_query])
-
-    try:
-      with concurrent.futures.ThreadPoolExecutor() as pool:
-        future = pool.submit(download_audio)
-        future.result()
-
-      if os.path.exists(mp3_file_name):
-        with open(mp3_file_name, "rb") as audio_file:
-          bot.send_audio(
-              message.chat.id,
-              audio_file,
-              caption=f"🎵 Запит: {user_query}",
-              reply_markup=get_user_keyboard(lang, user_id),
-          )
-        os.remove(mp3_file_name)
-      else:
-        bot.send_message(
-            message.chat.id,
-            "❌ На жаль, не вдалося знайти або завантажити трек за цим запитом.",
-            reply_markup=get_user_keyboard(lang, user_id),
-        )
-    except Exception as e:
-      print(f"Music download error: {e}")
-      bot.send_message(
-          message.chat.id,
-          "❌ Сталася помилка під час завантаження. Спробуй ще раз пізніше.",
-          reply_markup=get_user_keyboard(lang, user_id),
-      )
-    finally:
-      if os.path.exists(mp3_file_name):
-        try:
-          os.remove(mp3_file_name)
-        except:
-          pass
-      try:
-        bot.delete_message(message.chat.id, processing_msg.message_id)
-      except:
-        pass
     return
 
   if text in [
       "⚠ Пожаловаться / Написать админу",
-      "⚠️ Поскаржитися / Написати адміну",
+      "⚠ Поскаржитися / Написати адміну",
   ]:
     if not config.get("btn_support_enabled", True) and not is_admin:
       bot.send_message(message.chat.id, TEXTS[lang]["feature_disabled"])
@@ -1768,11 +1314,79 @@ def handle_user_messages(message):
   if text in ["❌ Завершить диалог", "❌ Завершити діалог"]:
     if user_id in user_support_mode:
       user_support_mode.remove(user_id)
+    if user_id in user_music_waiting:
+      user_music_waiting.remove(user_id)
     bot.send_message(
         message.chat.id,
         "✅ Діалог завершено.",
         reply_markup=get_user_keyboard(lang, user_id),
     )
+    return
+
+  # Обробка пошуку та надсилання музики з видаленням файлу
+  if user_id in user_music_waiting and text not in ignored_texts:
+    search_query = text.strip()
+    wait_msg = bot.send_message(
+        message.chat.id,
+        "🔍 Шукаю музику..." if lang == "ua" else "🔍 Ищу музыку...",
+    )
+
+    audio_file_path = None
+    try:
+      ydl_opts = {
+          "format": "bestaudio/best",
+          "default_search": "ytsearch1",
+          "postprocessors": [{
+              "key": "FFmpegExtractAudio",
+              "preferredcodec": "mp3",
+              "preferredquality": "192",
+          }],
+          "outtmpl": f"temp_music_{user_id}_%(id)s.%(ext)s",
+          "quiet": True,
+      }
+
+      with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(search_query, download=True)
+        if "entries" in info:
+          info = info["entries"][0]
+        filename = ydl.prepare_filename(info)
+        audio_file_path = os.path.splitext(filename)[0] + ".mp3"
+
+      if audio_file_path and os.path.exists(audio_file_path):
+        with open(audio_file_path, "rb") as audio:
+          bot.send_audio(
+              message.chat.id,
+              audio,
+              caption=f"🎵 {info.get('title', search_query)}",
+          )
+        bot.delete_message(message.chat.id, wait_msg.message_id)
+      else:
+        bot.edit_message_text(
+            "❌ Не вдалося знайти трек."
+            if lang == "ua"
+            else "❌ Не удалось найти трек.",
+            message.chat.id,
+            wait_msg.message_id,
+        )
+    except Exception as e:
+      print(f"Music download error: {e}")
+      try:
+        bot.edit_message_text(
+            "❌ Сталася помилка при завантаженні музики."
+            if lang == "ua"
+            else "❌ Произошла ошибка при загрузке музыки.",
+            message.chat.id,
+            wait_msg.message_id,
+        )
+      except:
+        pass
+    finally:
+      # ВИДАЛЕННЯ ФАЙЛУ З ПАМ'ЯТІ СЕРВЕРА (щоб не заповнювати диск)
+      if audio_file_path and os.path.exists(audio_file_path):
+        try:
+          os.remove(audio_file_path)
+        except Exception as e:
+          print(f"File remove error: {e}")
     return
 
   admin_chats = config.get("admin_chat_ids", [SUPER_ADMIN_ID])
@@ -1827,143 +1441,12 @@ def handle_user_messages(message):
         message.chat.id, TEXTS[lang]["lang_select"], reply_markup=markup
     )
     return
-  elif text in ["🎬 Инструкция", "🎬 Інструкція"]:
-    if not config.get("btn_instruction_enabled", True) and not is_admin:
-      bot.send_message(message.chat.id, TEXTS[lang]["feature_disabled"])
-      return
-    bot.send_message(
-        message.chat.id,
-        TEXTS[lang]["active"],
-        reply_markup=get_user_keyboard(lang, user_id),
-    )
-    return
 
-  if message.content_type == "photo":
-    chat_id = message.chat.id
-    uname_str = f"@{user.username}" if user.username else f"ID:{user_id}"
-    write_log(
-        "ОТПРАВКА ФОТО",
-        f"{uname_str} (ID: {user_id}, Имя: {user.first_name})",
-        "Пользователь загрузил фотографию в буфер",
-    )
-    if not config.get("video_creation_enabled", True) and not is_admin:
-      bot.reply_to(
-          message,
-          TEXTS[lang]["video_disabled_for_users"],
-          reply_markup=get_user_keyboard(lang, user_id),
-      )
-      return
-
-    try:
-      file_info = bot.get_file(message.photo[-1].file_id)
-      downloaded_file = bot.download_file(file_info.file_path)
-      if chat_id not in user_photos_buffer:
-        user_photos_buffer[chat_id] = []
-      user_photos_buffer[chat_id].append(downloaded_file)
-      current_count = len(user_photos_buffer[chat_id])
-
-      if current_count < 3:
-        msg_text = TEXTS[lang]["photo_saved"].format(current_count)
-        bot.reply_to(
-            message,
-            msg_text,
-            reply_markup=get_user_keyboard(lang, user_id),
-        )
-      else:
-        sub_photos = user_photos_buffer[chat_id][:3]
-        user_photos_buffer[chat_id] = []
-        bot.reply_to(
-            message,
-            TEXTS[lang]["rendering"],
-            reply_markup=get_user_keyboard(lang, user_id),
-        )
-
-        clips = []
-        img_paths = []
-        output_video_path = os.path.join(BASE_DIR, f"result_{user_id}.mp4")
-        video = None
-
-        try:
-          quote_text = get_unique_quote(user_id, lang)
-          for idx, p_data in enumerate(sub_photos):
-            p_path = os.path.join(BASE_DIR, f"temp_{user_id}_{idx}.png")
-            processed_img = prepare_photo_with_letterbox(p_data, quote_text)
-            processed_img.save(p_path)
-            img_paths.append(p_path)
-
-          frame_duration = 0.2
-          target_total_duration = 5.0
-          num_loops = (
-              int(target_total_duration / (len(img_paths) * frame_duration)) + 1
-          )
-          repeated_img_paths = img_paths * num_loops
-          clips = [
-              ImageClip(p).set_duration(frame_duration).resize(width=1080)
-              for p in repeated_img_paths
-          ]
-
-          video = concatenate_videoclips(clips, method="compose")
-          video = video.subclip(0, target_total_duration)
-          video.write_videofile(
-              output_video_path,
-              fps=24,
-              codec="libx264",
-              audio=False,
-              logger=None,
-              preset="medium",
-              bitrate="4000k",
-          )
-          if video:
-            video.close()
-
-          write_log(
-              "ГЕНЕРАЦИЯ ВИДЕО",
-              f"{uname_str} (ID: {user_id})",
-              "Успешно создано и отправлено видео из 3 фото",
-          )
-          with open(output_video_path, "rb") as vid_file:
-            bot.send_video(
-                chat_id,
-                vid_file,
-                reply_markup=get_user_keyboard(lang, user_id),
-            )
-        except Exception as render_err:
-          print(f"Rendering error: {render_err}")
-          write_log(
-              "ОШИБКА РЕНДЕРИНГ",
-              f"{uname_str} (ID: {user_id})",
-              str(render_err),
-          )
-          bot.send_message(
-              chat_id,
-              TEXTS[lang]["error"],
-              reply_markup=get_user_keyboard(lang, user_id),
-          )
-        finally:
-          if video:
-            try:
-              video.close()
-            except:
-              pass
-          for clip in clips if "clips" in locals() else []:
-            try:
-              clip.close()
-            except:
-              pass
-          for p in img_paths:
-            if os.path.exists(p):
-              try:
-                os.remove(p)
-              except:
-                pass
-          if os.path.exists(output_video_path):
-            try:
-              os.remove(output_video_path)
-            except:
-              pass
-          gc.collect()
-    except Exception as e:
-      print(f"Error handling photo: {e}")
+  bot.send_message(
+      message.chat.id,
+      "ℹ️ Скористайтеся меню нижче.",
+      reply_markup=get_user_keyboard(lang, user_id),
+  )
 
 
 if __name__ == "__main__":
@@ -1971,5 +1454,5 @@ if __name__ == "__main__":
   web_thread.daemon = True
   web_thread.start()
 
-  print("Bot is starting polling polling...")
+  print("Бот запущено та готовий до роботи...")
   bot.infinity_polling()
